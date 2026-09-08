@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { authClient } from '@/lib/auth-client'
 import {
   Activity,
   AlertCircle,
@@ -117,7 +118,7 @@ export default function Page() {
             <p className="px-3 pb-2 pt-7 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9aa3af]">Your projects</p>
             {['Core Console', 'Developer Experience', 'Platform Security', 'IT Operations'].map((project, i) => <button key={project} onClick={() => setActive('Projects')} className="flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-[#667181] hover:bg-[#f5f7f9]"><span className={`size-2 rounded-full ${['bg-violet-500', 'bg-amber-500', 'bg-rose-500', 'bg-emerald-500'][i]}`} />{project}</button>)}
           </nav>
-          <div className="mt-auto border-t border-[#edf0f3] p-4"><button className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-[#667181] hover:bg-[#f5f7f9]"><Settings2 className="size-4" /> Workspace settings</button><div className="mt-3 flex items-center gap-3 border-t border-[#edf0f3] pt-4"><div className="flex size-8 items-center justify-center rounded-full bg-[#e5d7ff] text-xs font-semibold text-[#7041ae]">JD</div><div className="min-w-0"><p className="truncate text-xs font-semibold">Jordan Davis</p><p className="truncate text-[11px] text-[#8b96a5]">Product engineer</p></div><MoreHorizontal className="ml-auto size-4 text-[#a0a8b3]" /></div></div>
+          <div className="mt-auto border-t border-[#edf0f3] p-4"><button className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-[#667181] hover:bg-[#f5f7f9]"><Settings2 className="size-4" /> Workspace settings</button><button onClick={() => authClient.signOut()} className="mt-3 flex w-full items-center gap-3 border-t border-[#edf0f3] pt-4 text-left"><div className="flex size-8 items-center justify-center rounded-full bg-[#e5d7ff] text-xs font-semibold text-[#7041ae]">JD</div><div className="min-w-0"><p className="truncate text-xs font-semibold">Jordan Davis</p><p className="truncate text-[11px] text-[#8b96a5]">Sign out</p></div><MoreHorizontal className="ml-auto size-4 text-[#a0a8b3]" /></button></div>
         </aside>
 
         <section className="min-w-0 flex-1">
