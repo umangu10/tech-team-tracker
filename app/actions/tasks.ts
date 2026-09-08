@@ -1,92 +1,246 @@
 'use server'
 
-import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { activity, task, taskComment, user, workspaceMember } from '@/lib/db/schema'
-import { and, eq } from 'drizzle-orm'
-import { headers } from 'next/headers'
+import { activity, epic as epicTable, project, sprint as sprintTable, task, taskComment, user } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
+import {
+  TASK_PRIORITIES,
+  TASK_STATUSES,
+  TASK_TYPES,
+  type TaskPriority,
+  type TaskStatus,
+  type TaskType,
+} from '@/lib/constants'
+import { getTeamRoleForProject, getUserId, requireTeamMember } from '@/lib/permissions'
 
-const statuses = ['To do', 'In progress', 'Review', 'Done'] as const
-const priorities = ['Low', 'Medium', 'High', 'Urgent'] as const
-const types = ['Task', 'Story', 'Bug', 'Incident'] as const
-
-async function getUserId() {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session?.user) throw new Error('Unauthorized')
-  return session.user.id
+function clean(value: string, fallback = '') {
+  return value.trim() || fallback
 }
 
-async function canManageTask(id: string, userId: string) {
-  const row = (await db.select({ id: task.id, assigneeId: task.assigneeId, reporterId: task.reporterId }).from(task).where(eq(task.id, id)).limit(1))[0]
-  if (!row) throw new Error('Task not found')
-  if (row.assigneeId !== userId && row.reporterId !== userId) throw new Error('You can only manage tasks assigned to you or created by you')
-  return row
+/** Runs atomically: reads project.issueCounter, writes the key, bumps the counter. */
+function insertTaskWithKey(
+  values: Omit<typeof task.$inferInsert, 'key' | 'projectId'> & { key?: never },
+  projectId: string,
+) {
+  return db.transaction((tx) => {
+    const proj = tx
+      .select({ key: project.key, issueCounter: project.issueCounter })
+      .from(project)
+      .where(eq(project.id, projectId))
+      .get()
+    if (!proj) throw new Error('Project not found')
+
+    const key = `${proj.key}-${proj.issueCounter}`
+    tx.update(project)
+      .set({ issueCounter: proj.issueCounter + 1, updatedAt: new Date() })
+      .where(eq(project.id, projectId))
+      .run()
+    tx.insert(task).values({ ...values, key, projectId }).run()
+    return key
+  })
 }
 
-function clean(value: string, fallback = '') { return value.trim() || fallback }
-
-export async function createTask(input: { title: string; description?: string; type?: string; priority?: string; dueDate?: string; assigneeId?: string; project?: string; area?: string; points?: number }) {
+export async function createTask(input: {
+  projectId: string
+  title: string
+  description?: string
+  type?: string
+  priority?: string
+  dueDate?: string
+  assigneeId?: string
+  area?: string
+  points?: number
+  epicId?: string
+  sprintId?: string
+}) {
   const userId = await getUserId()
+  requireTeamMember(getTeamRoleForProject(input.projectId, userId))
+
   const title = clean(input.title)
   if (!title) throw new Error('Task title is required')
+
   const id = crypto.randomUUID()
-  const key = `ORB-${Math.floor(10000 + Math.random() * 89999)}`
-  const assigneeId = input.assigneeId || userId
-  const type = types.includes(input.type as typeof types[number]) ? input.type! : 'Task'
-  const priority = priorities.includes(input.priority as typeof priorities[number]) ? input.priority! : 'Medium'
-  await db.insert(task).values({ id, key, title, description: input.description?.trim() ?? '', type, priority, status: 'To do', assigneeId, reporterId: userId, dueDate: input.dueDate ? new Date(input.dueDate) : null, project: clean(input.project || '', 'Core Console'), area: clean(input.area || '', 'Engineering'), points: input.points || 3 })
-  await db.insert(activity).values({ id: crypto.randomUUID(), actorId: userId, taskId: id, action: `created ${key}` })
+  const type: TaskType = TASK_TYPES.includes(input.type as TaskType) ? (input.type as TaskType) : 'Task'
+  const priority: TaskPriority = TASK_PRIORITIES.includes(input.priority as TaskPriority)
+    ? (input.priority as TaskPriority)
+    : 'Medium'
+
+  const key = insertTaskWithKey(
+    {
+      id,
+      title,
+      description: input.description?.trim() ?? '',
+      type,
+      priority,
+      status: 'To do',
+      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+      assigneeId: input.assigneeId || userId,
+      reporterId: userId,
+      area: clean(input.area ?? '', 'Engineering'),
+      points: Math.max(1, Math.round(input.points ?? 3)),
+      epicId: input.epicId ?? null,
+      sprintId: input.sprintId ?? null,
+    },
+    input.projectId,
+  )
+
+  db.insert(activity)
+    .values({ id: crypto.randomUUID(), actorId: userId, taskId: id, action: `created ${key}` })
+    .run()
+
   revalidatePath('/')
   return { id, key }
 }
 
-export async function updateTask(id: string, input: { title?: string; description?: string; type?: string; priority?: string; status?: string; dueDate?: string | null; assigneeId?: string; points?: number; blocked?: boolean }) {
+export async function updateTask(
+  id: string,
+  input: {
+    title?: string
+    description?: string
+    type?: string
+    priority?: string
+    status?: string
+    dueDate?: string | null
+    assigneeId?: string | null
+    epicId?: string | null
+    sprintId?: string | null
+    area?: string
+    points?: number
+    blocked?: boolean
+  },
+) {
   const userId = await getUserId()
-  await canManageTask(id, userId)
+
+  const row = db
+    .select({
+      projectId: task.projectId,
+      assigneeId: task.assigneeId,
+      reporterId: task.reporterId,
+      status: task.status,
+    })
+    .from(task)
+    .where(eq(task.id, id))
+    .get()
+  if (!row) throw new Error('Task not found')
+
+  const role = getTeamRoleForProject(row.projectId, userId)
+  const isOwner = row.assigneeId === userId || row.reporterId === userId
+  if (!isOwner && role !== 'admin' && role !== 'lead')
+    throw new Error('You can only manage tasks assigned to you or created by you')
+
   const changes: Record<string, unknown> = { updatedAt: new Date() }
   if (input.title !== undefined) changes.title = clean(input.title)
   if (input.description !== undefined) changes.description = input.description.trim()
-  if (input.type && types.includes(input.type as typeof types[number])) changes.type = input.type
-  if (input.priority && priorities.includes(input.priority as typeof priorities[number])) changes.priority = input.priority
-  if (input.status && statuses.includes(input.status as typeof statuses[number])) changes.status = input.status
+  if (input.type !== undefined) {
+    const t = input.type as TaskType
+    if (TASK_TYPES.includes(t)) changes.type = t
+  }
+  if (input.priority !== undefined) {
+    const p = input.priority as TaskPriority
+    if (TASK_PRIORITIES.includes(p)) changes.priority = p
+  }
+  if (input.status !== undefined) {
+    const s = input.status as TaskStatus
+    if (TASK_STATUSES.includes(s)) changes.status = s
+  }
   if (input.dueDate !== undefined) changes.dueDate = input.dueDate ? new Date(input.dueDate) : null
-  if (input.assigneeId) changes.assigneeId = input.assigneeId
-  if (input.points !== undefined) changes.points = input.points
+  if (input.assigneeId !== undefined) changes.assigneeId = input.assigneeId || null
+  if (input.epicId !== undefined) changes.epicId = input.epicId || null
+  if (input.sprintId !== undefined) changes.sprintId = input.sprintId || null
+  if (input.area !== undefined) changes.area = clean(input.area)
+  if (input.points !== undefined) changes.points = Math.max(1, Math.round(input.points))
   if (input.blocked !== undefined) changes.blocked = input.blocked
-  await db.update(task).set(changes).where(eq(task.id, id))
-  if (input.status) await db.insert(activity).values({ id: crypto.randomUUID(), actorId: userId, taskId: id, action: `moved task to ${input.status}` })
+
+  db.update(task).set(changes).where(eq(task.id, id)).run()
+
+  if (input.status && input.status !== row.status) {
+    db.insert(activity)
+      .values({ id: crypto.randomUUID(), actorId: userId, taskId: id, action: `moved task to ${input.status}` })
+      .run()
+  }
+
   revalidatePath('/')
 }
 
 export async function deleteTask(id: string) {
   const userId = await getUserId()
-  await canManageTask(id, userId)
-  await db.delete(taskComment).where(eq(taskComment.taskId, id))
-  await db.delete(activity).where(eq(activity.taskId, id))
-  await db.delete(task).where(eq(task.id, id))
+
+  const row = db
+    .select({ projectId: task.projectId, assigneeId: task.assigneeId, reporterId: task.reporterId })
+    .from(task)
+    .where(eq(task.id, id))
+    .get()
+  if (!row) throw new Error('Task not found')
+
+  const role = getTeamRoleForProject(row.projectId, userId)
+  const isOwner = row.assigneeId === userId || row.reporterId === userId
+  if (!isOwner && role !== 'admin' && role !== 'lead')
+    throw new Error('You can only delete tasks assigned to you or created by you')
+
+  db.delete(taskComment).where(eq(taskComment.taskId, id)).run()
+  db.delete(activity).where(eq(activity.taskId, id)).run()
+  db.delete(task).where(eq(task.id, id)).run()
   revalidatePath('/')
 }
 
 export async function addTaskComment(taskId: string, body: string) {
   const userId = await getUserId()
-  await canManageTask(taskId, userId)
+
+  const row = db
+    .select({ projectId: task.projectId })
+    .from(task)
+    .where(eq(task.id, taskId))
+    .get()
+  if (!row) throw new Error('Task not found')
+  requireTeamMember(getTeamRoleForProject(row.projectId, userId))
+
   const cleanBody = body.trim()
   if (!cleanBody) throw new Error('Comment cannot be empty')
-  await db.insert(taskComment).values({ id: crypto.randomUUID(), taskId, authorId: userId, body: cleanBody })
-  await db.insert(activity).values({ id: crypto.randomUUID(), actorId: userId, taskId, action: 'commented on task' })
+
+  db.insert(taskComment).values({ id: crypto.randomUUID(), taskId, authorId: userId, body: cleanBody }).run()
+  db.insert(activity)
+    .values({ id: crypto.randomUUID(), actorId: userId, taskId, action: 'commented on task' })
+    .run()
   revalidatePath('/')
 }
 
 export async function getTaskDetails(taskId: string) {
   const userId = await getUserId()
-  await canManageTask(taskId, userId)
-  const comments = await db.select({ id: taskComment.id, body: taskComment.body, createdAt: taskComment.createdAt, author: user.name }).from(taskComment).leftJoin(user, eq(user.id, taskComment.authorId)).where(eq(taskComment.taskId, taskId))
-  return comments
+
+  const row = db.select({ projectId: task.projectId }).from(task).where(eq(task.id, taskId)).get()
+  if (!row) throw new Error('Task not found')
+  requireTeamMember(getTeamRoleForProject(row.projectId, userId))
+
+  return db
+    .select({
+      id: taskComment.id,
+      body: taskComment.body,
+      createdAt: taskComment.createdAt,
+      authorId: taskComment.authorId,
+      author: user.name,
+    })
+    .from(taskComment)
+    .leftJoin(user, eq(user.id, taskComment.authorId))
+    .where(eq(taskComment.taskId, taskId))
+    .all()
 }
 
-export async function ensureWorkspaceMember(displayName: string) {
+// ---- epic / sprint cross-projection helpers (used by the UI to show sprint & epic on tasks) ----
+
+export async function getSprintById(id: string) {
   const userId = await getUserId()
-  const existing = await db.select().from(workspaceMember).where(eq(workspaceMember.userId, userId)).limit(1)
-  if (!existing.length) await db.insert(workspaceMember).values({ id: crypto.randomUUID(), userId, displayName: clean(displayName, 'Team member') })
+  const row = db.select().from(sprintTable).where(eq(sprintTable.id, id)).get()
+  if (!row) return null
+  const projectRow = db.select({ teamId: project.teamId }).from(project).where(eq(project.id, row.projectId)).get()
+  if (projectRow) requireTeamMember(getTeamRoleForProject(row.projectId, userId))
+  return row
+}
+
+export async function getEpicById(id: string) {
+  const userId = await getUserId()
+  const row = db.select().from(epicTable).where(eq(epicTable.id, id)).get()
+  if (!row) return null
+  requireTeamMember(getTeamRoleForProject(row.projectId, userId))
+  return row
 }

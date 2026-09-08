@@ -13,3 +13,10 @@ __v0_jsx-dev-runtime.ts
 node_modules
 .next/
 .DS_Store
+tsconfig.tsbuildinfo
+
+# Local SQLite database
+data/
+
+# Agent testing artifacts
+.playwright-mcp/
