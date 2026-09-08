@@ -15,8 +15,5 @@ node_modules
 .DS_Store
 tsconfig.tsbuildinfo
 
-# Local SQLite database
-data/
-
 # Agent testing artifacts
 .playwright-mcp/

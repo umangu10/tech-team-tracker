@@ -10,21 +10,23 @@ function clean(value: string, fallback = '') {
   return value.trim() || fallback
 }
 
-function getSprint(id: string) {
-  return db.select().from(sprint).where(eq(sprint.id, id)).get()
+async function getSprint(id: string) {
+  const [row] = await db.select().from(sprint).where(eq(sprint.id, id)).limit(1)
+  return row
 }
 
 export async function createSprint(
   input: { projectId: string; name: string; goal?: string; startsAt?: string; endsAt?: string },
 ) {
   const userId = await getUserId()
-  requireTeamMember(getTeamRoleForProject(input.projectId, userId))
+  requireTeamMember(await getTeamRoleForProject(input.projectId, userId))
 
   const name = clean(input.name)
   if (!name) throw new Error('Sprint name is required')
 
   const id = crypto.randomUUID()
-  db.insert(sprint)
+  await db
+    .insert(sprint)
     .values({
       id,
       projectId: input.projectId,
@@ -34,7 +36,6 @@ export async function createSprint(
       startsAt: input.startsAt ? new Date(input.startsAt) : null,
       endsAt: input.endsAt ? new Date(input.endsAt) : null,
     })
-    .run()
 
   revalidatePath('/')
   return { id }
@@ -46,9 +47,9 @@ export async function updateSprint(
 ) {
   const userId = await getUserId()
 
-  const row = getSprint(id)
+  const row = await getSprint(id)
   if (!row) throw new Error('Sprint not found')
-  requireTeamMember(getTeamRoleForProject(row.projectId, userId))
+  requireTeamMember(await getTeamRoleForProject(row.projectId, userId))
 
   const changes: Record<string, unknown> = { updatedAt: new Date() }
   if (input.name !== undefined) {
@@ -60,7 +61,7 @@ export async function updateSprint(
   if (input.startsAt !== undefined) changes.startsAt = input.startsAt ? new Date(input.startsAt) : null
   if (input.endsAt !== undefined) changes.endsAt = input.endsAt ? new Date(input.endsAt) : null
 
-  db.update(sprint).set(changes).where(eq(sprint.id, id)).run()
+  await db.update(sprint).set(changes).where(eq(sprint.id, id))
   revalidatePath('/')
 }
 
@@ -68,22 +69,22 @@ export async function updateSprint(
 export async function startSprint(id: string) {
   const userId = await getUserId()
 
-  const row = getSprint(id)
+  const row = await getSprint(id)
   if (!row) throw new Error('Sprint not found')
-  requireTeamMember(getTeamRoleForProject(row.projectId, userId))
+  requireTeamMember(await getTeamRoleForProject(row.projectId, userId))
   if (row.status !== 'planned') throw new Error('Only planned sprints can be started')
 
-  const active = db
+  const [active] = await db
     .select({ id: sprint.id })
     .from(sprint)
     .where(and(eq(sprint.projectId, row.projectId), eq(sprint.status, 'active')))
-    .get()
+    .limit(1)
   if (active) throw new Error('Another sprint is already active for this project')
 
-  db.update(sprint)
+  await db
+    .update(sprint)
     .set({ status: 'active', startsAt: row.startsAt ?? new Date(), updatedAt: new Date() })
     .where(eq(sprint.id, id))
-    .run()
   revalidatePath('/')
 }
 
@@ -91,20 +92,20 @@ export async function startSprint(id: string) {
 export async function completeSprint(id: string) {
   const userId = await getUserId()
 
-  const row = getSprint(id)
+  const row = await getSprint(id)
   if (!row) throw new Error('Sprint not found')
-  requireTeamMember(getTeamRoleForProject(row.projectId, userId))
+  requireTeamMember(await getTeamRoleForProject(row.projectId, userId))
   if (row.status !== 'active') throw new Error('Only active sprints can be completed')
 
-  db.transaction((tx) => {
-    tx.update(sprint)
+  await db.transaction(async (tx) => {
+    await tx
+      .update(sprint)
       .set({ status: 'completed', completedAt: new Date(), updatedAt: new Date() })
       .where(eq(sprint.id, id))
-      .run()
-    tx.update(task)
+    await tx
+      .update(task)
       .set({ sprintId: null })
       .where(and(eq(task.sprintId, id), ne(task.status, 'Done')))
-      .run()
   })
 
   revalidatePath('/')
@@ -113,22 +114,22 @@ export async function completeSprint(id: string) {
 export async function deleteSprint(id: string) {
   const userId = await getUserId()
 
-  const row = getSprint(id)
+  const row = await getSprint(id)
   if (!row) throw new Error('Sprint not found')
-  requireAdminOrLead(getTeamRoleForProject(row.projectId, userId))
+  requireAdminOrLead(await getTeamRoleForProject(row.projectId, userId))
   if (row.status === 'active') throw new Error('Complete the sprint before deleting it')
 
-  db.transaction((tx) => {
-    tx.update(task).set({ sprintId: null }).where(eq(task.sprintId, id)).run()
-    tx.delete(sprint).where(eq(sprint.id, id)).run()
+  await db.transaction(async (tx) => {
+    await tx.update(task).set({ sprintId: null }).where(eq(task.sprintId, id))
+    await tx.delete(sprint).where(eq(sprint.id, id))
   })
   revalidatePath('/')
 }
 
 export async function getProjectById(id: string) {
   const userId = await getUserId()
-  const row = db.select().from(project).where(eq(project.id, id)).get()
+  const [row] = await db.select().from(project).where(eq(project.id, id)).limit(1)
   if (!row) return null
-  requireTeamMember(getTeamRoleForProject(id, userId))
+  requireTeamMember(await getTeamRoleForProject(id, userId))
   return row
 }

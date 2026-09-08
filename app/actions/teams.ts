@@ -17,11 +17,12 @@ export async function createTeam(input: { name: string; description?: string }) 
   if (!name) throw new Error('Team name is required')
 
   const id = crypto.randomUUID()
-  db.transaction((tx) => {
-    tx.insert(team)
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(team)
       .values({ id, name, description: input.description?.trim() ?? '' })
-      .run()
-    tx.insert(teamMember)
+    await tx
+      .insert(teamMember)
       .values({
         id: crypto.randomUUID(),
         teamId: id,
@@ -30,7 +31,6 @@ export async function createTeam(input: { name: string; description?: string }) 
         displayName: '',
         avatarColor: DEFAULT_AVATAR_COLOR,
       })
-      .run()
   })
 
   revalidatePath('/')
@@ -42,29 +42,28 @@ export async function updateMemberRole(memberId: string, role: string) {
   const newRole = role as TeamRole
   if (!TEAM_ROLES.includes(newRole)) throw new Error('Invalid role')
 
-  const member = db.select().from(teamMember).where(eq(teamMember.id, memberId)).get()
+  const [member] = await db.select().from(teamMember).where(eq(teamMember.id, memberId)).limit(1)
   if (!member) throw new Error('Member not found')
 
-  const myRole = db
+  const [myRole] = await db
     .select({ role: teamMember.role })
     .from(teamMember)
     .where(and(eq(teamMember.teamId, member.teamId), eq(teamMember.userId, userId)))
-    .get()
+    .limit(1)
   if (!myRole || myRole.role !== 'admin') throw new Error('Only team admins can change roles')
 
   // Never demote the last admin of a team
   if (member.role === 'admin' && newRole !== 'admin') {
-    const admins = db
+    const admins = await db
       .select({ id: teamMember.id })
       .from(teamMember)
       .where(and(eq(teamMember.teamId, member.teamId), eq(teamMember.role, 'admin')))
-      .all()
     if (admins.length <= 1) throw new Error('A team must keep at least one admin')
   }
 
-  db.update(teamMember)
+  await db
+    .update(teamMember)
     .set({ role: newRole, updatedAt: new Date() })
     .where(eq(teamMember.id, memberId))
-    .run()
   revalidatePath('/')
 }

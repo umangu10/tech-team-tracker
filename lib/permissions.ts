@@ -15,30 +15,29 @@ export async function getUserId() {
 /**
  * The role of `userId` inside the team that owns `projectId`.
  * Returns null when the user is not a member of that team (or the project is missing).
- * Sync: better-sqlite3 driver.
  */
-export function getTeamRoleForProject(projectId: string, userId: string): TeamRole | null {
-  const proj = db
+export async function getTeamRoleForProject(projectId: string, userId: string): Promise<TeamRole | null> {
+  const proj = await db
     .select({ teamId: project.teamId })
     .from(project)
     .where(eq(project.id, projectId))
-    .get()
-  if (!proj) return null
-  const member = db
+    .limit(1)
+  if (proj.length === 0) return null
+  const member = await db
     .select({ role: teamMember.role })
     .from(teamMember)
-    .where(and(eq(teamMember.teamId, proj.teamId), eq(teamMember.userId, userId)))
-    .get()
-  return (member?.role as TeamRole) ?? null
+    .where(and(eq(teamMember.teamId, proj[0].teamId), eq(teamMember.userId, userId)))
+    .limit(1)
+  return (member[0]?.role as TeamRole) ?? null
 }
 
 /** The user's own teams and their role in each. */
-export function getMyTeamRoles(userId: string): { teamId: string; role: TeamRole }[] {
-  return db
+export async function getMyTeamRoles(userId: string): Promise<{ teamId: string; role: TeamRole }[]> {
+  const rows = await db
     .select({ teamId: teamMember.teamId, role: teamMember.role })
     .from(teamMember)
     .where(eq(teamMember.userId, userId))
-    .all() as { teamId: string; role: TeamRole }[]
+  return rows as { teamId: string; role: TeamRole }[]
 }
 
 export function requireTeamMember(role: TeamRole | null): void {

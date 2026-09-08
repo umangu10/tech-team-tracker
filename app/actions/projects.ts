@@ -11,11 +11,13 @@ function clean(value: string, fallback = '') {
 }
 
 /** Derives a unique project key from a name: uppercase alphanumerics, first 4 chars, collision-safe. */
-function deriveUniqueKey(name: string): string {
+async function deriveUniqueKey(name: string): Promise<string> {
   const base = (name.toUpperCase().replace(/[^A-Z0-9]/g, '') || 'PROJ').slice(0, 4)
   let candidate = base
   let n = 2
-  while (db.select({ id: project.id }).from(project).where(eq(project.key, candidate)).get()) {
+  while (
+    (await db.select({ id: project.id }).from(project).where(eq(project.key, candidate)).limit(1)).length > 0
+  ) {
     candidate = `${base}${n++}`
   }
   return candidate
@@ -26,7 +28,7 @@ export async function createProject(input: { name: string; description?: string;
   const name = clean(input.name)
   if (!name) throw new Error('Project name is required')
 
-  const myTeams = getMyTeamRoles(userId)
+  const myTeams = await getMyTeamRoles(userId)
   if (!myTeams.length) throw new Error('You are not a member of any team yet')
   const teamId = input.teamId || myTeams[0].teamId
 
@@ -35,8 +37,9 @@ export async function createProject(input: { name: string; description?: string;
   requireAdminOrLead(myRole)
 
   const id = crypto.randomUUID()
-  const key = deriveUniqueKey(name)
-  db.insert(project)
+  const key = await deriveUniqueKey(name)
+  await db
+    .insert(project)
     .values({
       id,
       key,
@@ -45,7 +48,6 @@ export async function createProject(input: { name: string; description?: string;
       teamId,
       issueCounter: 100,
     })
-    .run()
 
   revalidatePath('/')
   return { id, key }
@@ -57,9 +59,9 @@ export async function updateProject(
 ) {
   const userId = await getUserId()
 
-  const row = db.select().from(project).where(eq(project.id, id)).get()
+  const [row] = await db.select().from(project).where(eq(project.id, id)).limit(1)
   if (!row) throw new Error('Project not found')
-  requireAdminOrLead(getTeamRoleForProject(id, userId))
+  requireAdminOrLead(await getTeamRoleForProject(id, userId))
 
   const changes: Record<string, unknown> = { updatedAt: new Date() }
   if (input.name !== undefined) {
@@ -71,24 +73,24 @@ export async function updateProject(
   if (input.key !== undefined) {
     const key = clean(input.key).toUpperCase().replace(/[^A-Z0-9]/g, '')
     if (!key) throw new Error('Project key cannot be empty')
-    const clash = db
+    const [clash] = await db
       .select({ id: project.id })
       .from(project)
       .where(eq(project.key, key))
-      .get()
+      .limit(1)
     if (clash && clash.id !== id) throw new Error(`Project key "${key}" is already in use`)
     changes.key = key
   }
   if (input.leadUserId !== undefined) changes.leadUserId = input.leadUserId || null
 
-  db.update(project).set(changes).where(eq(project.id, id)).run()
+  await db.update(project).set(changes).where(eq(project.id, id))
   revalidatePath('/')
 }
 
 export async function deleteProject(id: string) {
   const userId = await getUserId()
-  requireAdmin(getTeamRoleForProject(id, userId))
+  requireAdmin(await getTeamRoleForProject(id, userId))
 
-  db.delete(project).where(eq(project.id, id)).run()
+  await db.delete(project).where(eq(project.id, id))
   revalidatePath('/')
 }
