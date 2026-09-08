@@ -12,7 +12,7 @@ export default async function Page() {
 
   let member = (await db.select().from(workspaceMember).where(eq(workspaceMember.userId, session.user.id)).limit(1))[0]
   if (!member) {
-    member = { id: crypto.randomUUID(), userId: session.user.id, displayName: session.user.name || session.user.email.split('@')[0], role: 'member', avatarColor: 'bg-violet-600', createdAt: new Date() }
+    member = { id: crypto.randomUUID(), userId: session.user.id, displayName: session.user.name || session.user.email.split('@')[0], role: 'member', team: 'Engineering', avatarColor: 'bg-violet-600', createdAt: new Date() }
     await db.insert(workspaceMember).values(member)
   }
 
