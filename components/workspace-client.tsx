@@ -55,28 +55,6 @@ type TaskWithProject = Task & { projectKey: string; projectName: string }
 const AREAS = ['Engineering', 'DevOps', 'Security', 'IT']
 const POINTS = ['0', '1', '2', '3', '5', '8']
 
-const inputCls =
-  'w-full rounded-md border border-[#e2e6eb] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#2068f5]'
-const btnPrimary =
-  'flex items-center gap-1.5 rounded-md bg-[#2068f5] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1557c4] disabled:opacity-50 disabled:cursor-not-allowed'
-const btnGhost =
-  'flex items-center gap-1.5 rounded-md border border-[#e2e6eb] bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-[#f7f8fa]'
-
-const statusStyles: Record<string, string> = {
-  'To do': 'bg-blue-50 text-blue-600',
-  'In progress': 'bg-amber-50 text-amber-600',
-  Review: 'bg-purple-50 text-purple-600',
-  Done: 'bg-emerald-50 text-emerald-600',
-  Backlog: 'bg-slate-100 text-slate-500',
-}
-
-const priorityColors: Record<string, string> = {
-  Urgent: 'bg-red-50 text-red-600',
-  High: 'bg-orange-50 text-orange-600',
-  Medium: 'bg-yellow-50 text-yellow-600',
-  Low: 'bg-blue-50 text-blue-600',
-}
-
 function formatError(e: unknown): string {
   return e instanceof Error ? e.message : 'Failed to save changes'
 }
@@ -134,7 +112,7 @@ function Avatar({
 
 function Metric({ label, count }: { label: string; count: number }) {
   return (
-    <div className="rounded-lg border border-[#e2e6eb] bg-[#f7f8fa] px-3 py-2">
+    <div className="rounded-lg border border-[#e3e8ef] bg-[#f4f6fb] px-3 py-2">
       <div className="text-lg font-bold leading-tight text-slate-800">{count}</div>
       <div className="text-[10px] leading-tight text-slate-400">{label}</div>
     </div>
@@ -153,8 +131,8 @@ function Empty({
   action?: { label: string; onClick: () => void }
 }) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-[#e2e6eb] bg-white/60 px-6 py-14 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f1f5f9] text-[#2068f5]">
+    <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-[#e3e8ef] bg-white/60 px-6 py-14 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#eef2f8] text-[#1f6feb]">
         {icon}
       </div>
       <div>
@@ -187,7 +165,7 @@ function Dialog({
         className={`flex max-h-[90vh] w-full ${wide ? 'max-w-2xl' : 'max-w-md'} flex-col overflow-hidden rounded-xl bg-white shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-[#e2e6eb] px-5 py-3">
+        <div className="flex items-center justify-between border-b border-[#e3e8ef] px-5 py-3">
           <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
           <button onClick={onClose} className="text-slate-300 hover:text-slate-600">
             <X size={16} />
@@ -235,9 +213,9 @@ function TaskRow({
   return (
     <div
       onClick={() => onSelect(task)}
-      className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#e2e6eb] bg-white px-3 py-2 transition-colors hover:border-[#2068f5]/40 hover:bg-[#fafcff]"
+      className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 py-2 transition-colors hover:border-[#1f6feb]/40 hover:bg-[#f6f8fd]"
     >
-      <span className="shrink-0 rounded bg-[#f1f5f9] px-1.5 py-0.5 text-[10px] font-bold text-[#2068f5]">
+      <span className="shrink-0 rounded bg-[#eef2f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f6feb]">
         {task.key}
       </span>
       <div className="min-w-0 flex-1">
@@ -269,7 +247,7 @@ function TaskRow({
       {sprintOptions && onAssignSprint && (
         <select
           value=""
-          className="max-w-[110px] rounded border border-[#e2e6eb] bg-white px-1 py-1 text-[10px] text-slate-500 outline-none focus:border-[#2068f5]"
+          className="max-w-[110px] rounded border border-[#e3e8ef] bg-white px-1 py-1 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb]"
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => {
             if (e.target.value) onAssignSprint(task, e.target.value)
@@ -286,7 +264,7 @@ function TaskRow({
       {canEdit ? (
         <select
           value={task.status}
-          className="rounded border border-[#e2e6eb] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#2068f5]"
+          className="rounded border border-[#e3e8ef] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb]"
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onStatus(task, e.target.value)}
         >
@@ -335,13 +313,22 @@ function CompactTask({
   onDelete: (task: TaskWithProject) => void
 }) {
   const assignee = members.find((m) => m.userId === task.assigneeId)
+  const [dragging, setDragging] = useState(false)
   return (
     <div
+      draggable={canManage}
+      onDragStart={(e) => {
+        if (!canManage) return
+        setDragging(true)
+        e.dataTransfer.setData('text/plain', task.id)
+        e.dataTransfer.dropEffect = 'move'
+      }}
+      onDragEnd={() => setDragging(false)}
       onClick={() => onSelect(task)}
-      className="group cursor-pointer rounded-md border border-[#e2e6eb] bg-white p-2 transition-colors hover:border-[#2068f5]/40 hover:bg-[#fafcff]"
+      className={`group cursor-pointer rounded-md border border-[#e3e8ef] bg-white p-2 transition-colors hover:border-[#1f6feb]/40 hover:bg-[#f6f8fd] ${dragging ? 'opacity-40' : ''} ${canManage ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
     >
       <div className="flex items-center gap-1.5">
-        <span className="shrink-0 rounded bg-[#f1f5f9] px-1 py-px text-[9px] font-bold text-[#2068f5]">{task.key}</span>
+        <span className="shrink-0 rounded bg-[#eef2f8] px-1 py-px text-[9px] font-bold text-[#1f6feb]">{task.key}</span>
         <span className={`ml-auto rounded px-1 py-px text-[9px] font-medium ${priorityColors[task.priority] ?? 'bg-slate-100 text-slate-500'}`}>
           {task.priority}
         </span>
@@ -412,15 +399,30 @@ function Column({
   onDelete: (task: TaskWithProject) => void
   onDrop?: (e: DragEvent<HTMLDivElement>, status: string) => void
 }) {
+  const [over, setOver] = useState(false)
   const dragging = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
   }
+  const enter = () => setOver(true)
+  const leave = () => setOver(false)
   return (
     <div
-      className="flex flex-col gap-2 rounded-lg border border-[#e2e6eb] bg-[#fafbfc] p-2"
-      onDragOver={onDrop ? dragging : undefined}
-      onDrop={onDrop ? (e) => onDrop(e, label) : undefined}
+      className={`flex flex-col gap-2 rounded-lg border bg-[#f6f7fb] p-2 transition-colors ${
+        over ? 'border-[#1f6feb] bg-[#eef4ff]' : 'border-[#e3e8ef]'
+      }`}
+      onDragOver={(e) => {
+        if (!onDrop) return
+        dragging(e)
+        enter()
+      }}
+      onDragLeave={leave}
+      onDrop={(e) => {
+        if (!onDrop) return
+        e.preventDefault()
+        leave()
+        onDrop(e, label)
+      }}
     >
       <div className="flex items-center gap-2 px-1">
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusStyles[label] ?? 'bg-slate-100 text-slate-500'}`}>
@@ -430,8 +432,8 @@ function Column({
       </div>
       <div className="flex min-h-[80px] flex-col gap-2">
         {tasks.length === 0 ? (
-          <div className="flex h-16 items-center justify-center rounded-md border border-dashed border-[#e2e6eb] text-[10px] text-slate-300">
-            Drop tasks here
+          <div className="flex h-16 items-center justify-center rounded-md border border-dashed border-[#e3e8ef] text-[10px] text-slate-300">
+            {onDrop ? 'Drop tasks here' : 'No tasks'}
           </div>
         ) : (
           tasks.map((task) => (
@@ -457,6 +459,28 @@ const sprintDot: Record<string, string> = {
   active: 'bg-emerald-500',
   completed: 'bg-slate-400',
 }
+
+const statusStyles: Record<string, string> = {
+  'To do': 'bg-blue-50 text-blue-600',
+  'In progress': 'bg-amber-50 text-amber-600',
+  Review: 'bg-purple-50 text-purple-600',
+  Done: 'bg-emerald-50 text-emerald-600',
+  Backlog: 'bg-slate-100 text-slate-500',
+}
+
+const priorityColors: Record<string, string> = {
+  Urgent: 'bg-red-50 text-red-600',
+  High: 'bg-orange-50 text-orange-600',
+  Medium: 'bg-yellow-50 text-yellow-600',
+  Low: 'bg-blue-50 text-blue-600',
+}
+
+const inputCls =
+  'w-full rounded-md border border-[#e3e8ef] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#1f6feb] focus:ring-2 focus:ring-[#1f6feb]/15'
+const btnPrimary =
+  'flex items-center gap-1.5 rounded-md bg-[#1f6feb] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1963d8] disabled:opacity-50 disabled:cursor-not-allowed'
+const btnGhost =
+  'flex items-center gap-1.5 rounded-md border border-[#e3e8ef] bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-[#f4f6fb]'
 
 function SprintBoard({
   project,
@@ -523,9 +547,9 @@ function SprintBoard({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#e2e6eb] bg-white p-3">
+      <div className="surface-card flex flex-wrap items-center justify-between gap-3 p-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2068f5]/10 text-[10px] font-bold text-[#2068f5]">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#1f6feb] to-[#3b82f6] text-xs font-bold text-white shadow-sm">
             {project.key}
           </div>
           <div>
@@ -558,7 +582,7 @@ function SprintBoard({
         <button
           onClick={() => setSelection(null)}
           className={`rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
-            !showSprint ? 'bg-[#2068f5] text-white' : 'bg-white text-slate-500 border border-[#e2e6eb] hover:bg-[#f7f8fa]'
+            !showSprint ? 'bg-[#1f6feb] text-white' : 'bg-white text-slate-500 border border-[#e3e8ef] hover:bg-[#f4f6fb]'
           }`}
         >
           Backlog
@@ -568,7 +592,7 @@ function SprintBoard({
             key={s.id}
             onClick={() => setSelection(s.id)}
             className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
-              selection === s.id ? 'bg-[#2068f5] text-white' : 'bg-white text-slate-500 border border-[#e2e6eb] hover:bg-[#f7f8fa]'
+              selection === s.id ? 'bg-[#1f6feb] text-white' : 'bg-white text-slate-500 border border-[#e3e8ef] hover:bg-[#f4f6fb]'
             }`}
           >
             <span className={`h-1.5 w-1.5 rounded-full ${sprintDot[s.status] ?? 'bg-slate-300'}`} />
@@ -580,47 +604,47 @@ function SprintBoard({
         ))}
       </div>
 
-      {selectedSprint && (
-        <div className="flex items-center gap-2 rounded-lg border border-[#e2e6eb] bg-white px-3 py-2 text-[11px] text-slate-500">
-          <Layers3 size={13} className="text-[#2068f5]" />
-          <span className="font-medium text-slate-700">{selectedSprint.name}</span>
-          {selectedSprint.goal && <span className="truncate text-slate-400">· {selectedSprint.goal}</span>}
-          <span className="ml-auto shrink-0">
-            {doneCount}/{sprintTasks.length} done
-          </span>
-          <div className="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-[#e2e6eb]">
-            <div
-              className="h-full rounded-full bg-[#2068f5] transition-all"
-              style={{ width: sprintTasks.length ? `${Math.round((doneCount / sprintTasks.length) * 100)}%` : '0%' }}
-            />
+{selectedSprint && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#e3e8ef] bg-white px-3 py-2 text-[11px] text-slate-500">
+            <Layers3 size={13} className="text-[#1f6feb]" />
+            <span className="font-medium text-slate-700">{selectedSprint.name}</span>
+            {selectedSprint.goal && <span className="truncate text-slate-400">· {selectedSprint.goal}</span>}
+            <span className="ml-auto shrink-0">
+              {doneCount}/{sprintTasks.length} done
+            </span>
+            <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[#e3e8ef]">
+              <div
+                className="h-full rounded-full bg-[#1f6feb] transition-all"
+                style={{ width: sprintTasks.length ? `${Math.round((doneCount / sprintTasks.length) * 100)}%` : '0%' }}
+              />
+            </div>
+            {selectedSprint.status === 'planned' && (
+              <button
+                className="shrink-0 rounded-md bg-[#1f6feb] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#1963d8]"
+                onClick={() => onStartSprint(selectedSprint)}
+              >
+                Start sprint
+              </button>
+            )}
+            {selectedSprint.status === 'active' && (
+              <button
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1 text-[10px] font-medium text-white hover:bg-emerald-700"
+                onClick={() => onCompleteSprint(selectedSprint)}
+              >
+                <Check size={12} /> End sprint
+              </button>
+            )}
+            {canManage && selectedSprint.status !== 'active' && (
+              <button
+                className="shrink-0 text-slate-300 hover:text-red-500"
+                onClick={() => onDeleteSprint(selectedSprint)}
+                title="Delete sprint"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
           </div>
-          {selectedSprint.status === 'planned' && (
-            <button
-              className="shrink-0 rounded-md bg-[#2068f5]/10 px-2 py-1 text-[10px] font-medium text-[#2068f5] hover:bg-[#2068f5]/20"
-              onClick={() => onStartSprint(selectedSprint)}
-            >
-              Start sprint
-            </button>
-          )}
-          {selectedSprint.status === 'active' && (
-            <button
-              className="shrink-0 rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-600 hover:bg-emerald-100"
-              onClick={() => onCompleteSprint(selectedSprint)}
-            >
-              End sprint
-            </button>
-          )}
-          {canManage && selectedSprint.status !== 'active' && (
-            <button
-              className="shrink-0 text-slate-300 hover:text-red-500"
-              onClick={() => onDeleteSprint(selectedSprint)}
-              title="Delete sprint"
-            >
-              <Trash2 size={13} />
-            </button>
-          )}
-        </div>
-      )}
+        )}
 
       <div
         className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${
@@ -683,10 +707,10 @@ function EpicsView({
         const count = tasks.filter((t) => t.epicId === epic.id).length
         const manage = canManageEpic(epic)
         return (
-          <div key={epic.id} className="flex flex-col gap-2 rounded-lg border border-[#e2e6eb] bg-white p-4">
+          <div key={epic.id} className="flex flex-col gap-2 rounded-lg border border-[#e3e8ef] bg-white p-4">
             <div className="flex items-center gap-2">
               {project && (
-                <span className="rounded bg-[#f1f5f9] px-1.5 py-0.5 text-[10px] font-bold text-[#2068f5]">{project.key}</span>
+                <span className="rounded bg-[#eef2f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f6feb]">{project.key}</span>
               )}
               <h3 className="truncate text-sm font-semibold text-slate-800">{epic.title}</h3>
               {manage && (
@@ -702,7 +726,7 @@ function EpicsView({
             {epic.description && (
               <p className="line-clamp-2 text-xs leading-relaxed text-slate-500">{epic.description}</p>
             )}
-            <div className="mt-auto flex items-center gap-2 border-t border-[#e2e6eb] pt-2">
+            <div className="mt-auto flex items-center gap-2 border-t border-[#e3e8ef] pt-2">
               <span className="flex items-center gap-1 text-[10px] text-slate-400">
                 <ListChecks size={11} /> {count} tasks
               </span>
@@ -710,7 +734,7 @@ function EpicsView({
                 <select
                   value={epic.status}
                   onChange={(e) => onChangeStatus(epic, e.target.value)}
-                  className="ml-auto rounded border border-[#e2e6eb] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#2068f5]"
+                  className="ml-auto rounded border border-[#e3e8ef] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb]"
                 >
                   {EPIC_STATUSES.map((s) => (
                     <option key={s} value={s}>
@@ -754,9 +778,9 @@ function ProjectsView({
         const count = tasks.filter((t) => t.projectId === project.id).length
         const manage = canManageProject(project)
         return (
-          <div key={project.id} className="group flex flex-col gap-2 rounded-lg border border-[#e2e6eb] bg-white p-4">
+          <div key={project.id} className="group flex flex-col gap-2 rounded-lg border border-[#e3e8ef] bg-white p-4">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#2068f5]/10 text-[10px] font-bold text-[#2068f5]">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#1f6feb]/10 text-[10px] font-bold text-[#1f6feb]">
                 {project.key}
               </div>
               <h3 className="truncate text-sm font-semibold text-slate-800">{project.name}</h3>
@@ -764,7 +788,7 @@ function ProjectsView({
                 <div className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <button
                     onClick={() => onEdit(project)}
-                    className="rounded p-1 text-slate-400 hover:bg-[#f7f8fa] hover:text-[#2068f5]"
+                    className="rounded p-1 text-slate-400 hover:bg-[#f4f6fb] hover:text-[#1f6feb]"
                     title="Edit project"
                   >
                     <Pencil size={13} />
@@ -782,7 +806,7 @@ function ProjectsView({
             {project.description && (
               <p className="line-clamp-2 text-xs leading-relaxed text-slate-500">{project.description}</p>
             )}
-            <div className="mt-auto flex items-center gap-3 border-t border-[#e2e6eb] pt-2 text-[10px] text-slate-400">
+            <div className="mt-auto flex items-center gap-3 border-t border-[#e3e8ef] pt-2 text-[10px] text-slate-400">
               <span>{team?.name ?? 'No team'}</span>
               {lead ? (
                 <span className="flex items-center gap-1">
@@ -836,10 +860,10 @@ function TeamsView({
         const teamUserIds = new Set(teamMembers.map((m) => m.userId))
         const available = (allUsers ?? []).filter((u) => !teamUserIds.has(u.id))
         return (
-          <div key={team.id} className="rounded-lg border border-[#e2e6eb] bg-white p-4">
+          <div key={team.id} className="rounded-lg border border-[#e3e8ef] bg-white p-4">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-slate-800">{team.name}</h3>
-              <span className="rounded-full bg-[#f1f5f9] px-2 py-0.5 text-[10px] text-slate-500">
+              <span className="rounded-full bg-[#eef2f8] px-2 py-0.5 text-[10px] text-slate-500">
                 {teamMembers.length} members
               </span>
               {teamMembers.length === 1 && teamMembers[0]?.id === currentUser.id && teamMembers[0]?.userId === currentUser.userId && teamMembers[0]?.role !== 'admin' && canCreateTeam && (
@@ -849,7 +873,7 @@ function TeamsView({
             {team.description && <p className="mt-1 text-xs text-slate-500">{team.description}</p>}
             <div className="mt-3 flex flex-col gap-1.5">
               {teamMembers.map((m) => (
-                <div key={m.id} className="flex items-center gap-2 rounded-md px-1 py-1 hover:bg-[#f7f8fa]">
+                <div key={m.id} className="flex items-center gap-2 rounded-md px-1 py-1 hover:bg-[#f4f6fb]">
                   <Avatar name={m.displayName || '?'} color={m.avatarColor} size={24} />
                   <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">
                     {m.displayName}
@@ -860,7 +884,7 @@ function TeamsView({
                       <select
                         value={m.role}
                         onChange={(e) => onChangeRole(m, e.target.value)}
-                        className="rounded border border-[#e2e6eb] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#2068f5]"
+                        className="rounded-md border border-[#e3e8ef] bg-white px-2 py-1 text-[10px] font-medium text-slate-600 outline-none focus:border-[#1f6feb] focus:ring-2 focus:ring-[#1f6feb]/15"
                       >
                         {['admin', 'lead', 'member'].map((r) => (
                           <option key={r} value={r}>
@@ -871,70 +895,77 @@ function TeamsView({
                       {m.userId !== currentUser.userId && (
                         <button
                           onClick={() => onRemoveMember(m)}
-                          title="Remove from team"
-                          className="text-slate-300 transition-colors hover:text-red-500"
+                          title={`Remove ${m.displayName} from ${team.name}`}
+                          className="flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-[10px] font-medium text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                         >
-                          <UserMinus size={13} />
+                          <UserMinus size={12} /> Remove
                         </button>
                       )}
                     </div>
                   ) : (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">{m.role}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{m.role}</span>
                   )}
                 </div>
               ))}
             </div>
-            {admin && (
-              <div className="mt-3 border-t border-[#eef1f5] pt-3">
-                {addFor === team.id ? (
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={pickId}
-                      onChange={(e) => setPickId(e.target.value)}
-                      className={inputCls + ' flex-1'}
-                    >
-                      <option value="">Select a user…</option>
-                      {available.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name || u.email || u.id}
-                        </option>
-                      ))}
-                    </select>
+{admin && (
+                <div className="mt-3 border-t border-[#e7ebf3] pt-3">
+                  {addFor === team.id ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={pickId}
+                        onChange={(e) => setPickId(e.target.value)}
+                        className={inputCls + ' flex-1 min-w-[180px]'}
+                      >
+                        <option value="">Select a user…</option>
+                        {available.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.name || u.email || u.id}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className={btnPrimary}
+                        disabled={!pickId}
+                        onClick={() => {
+                          onAddMember(team.id, pickId)
+                          setAddFor(null)
+                          setPickId('')
+                        }}
+                      >
+                        <UserPlus size={13} /> Add
+                      </button>
+                      <button
+                        className={btnGhost}
+                        onClick={() => {
+                          setAddFor(null)
+                          setPickId('')
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       className={btnPrimary}
-                      disabled={!pickId}
+                      disabled={allUsersLoading || !allUsers || available.length === 0}
                       onClick={() => {
-                        onAddMember(team.id, pickId)
-                        setAddFor(null)
                         setPickId('')
+                        setAddFor(team.id)
                       }}
+                      title={
+                        !allUsers
+                          ? 'You need admin access to view members'
+                          : available.length === 0
+                            ? 'Everyone is already on this team'
+                            : ''
+                      }
                     >
-                      <UserPlus size={13} /> Add
+                      <UserPlus size={13} /> Add member
                     </button>
-                    <button
-                      className={btnGhost}
-                      onClick={() => {
-                        setAddFor(null)
-                        setPickId('')
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    className={btnGhost}
-                    disabled={allUsersLoading || !allUsers || available.length === 0}
-                    onClick={() => {
-                      setPickId('')
-                      setAddFor(team.id)
-                    }}
-                  >
-                    <UserPlus size={13} /> Add member
-                  </button>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
           </div>
         )
       })}
@@ -973,9 +1004,9 @@ function HistoryView({
         const delivered = sprintTasks.filter((t) => t.status === 'Done')
         const points = delivered.reduce((sum, t) => sum + (t.points ?? 0), 0)
         return (
-          <div key={sprint.id} className="rounded-lg border border-[#e2e6eb] bg-white p-4">
+          <div key={sprint.id} className="rounded-lg border border-[#e3e8ef] bg-white p-4">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2068f5]/10 text-[10px] font-bold text-[#2068f5]">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#1f6feb]/10 text-[10px] font-bold text-[#1f6feb]">
                 {project?.key ?? '—'}
               </div>
               <div className="min-w-0 flex-1">
@@ -1185,7 +1216,7 @@ function CreateDialog({
             </select>
           </Field>
         </div>
-        <div className="flex justify-end gap-2 border-t border-[#e2e6eb] pt-3">
+        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
           <button className={btnGhost} onClick={onClose} disabled={pending}>
             Cancel
           </button>
@@ -1229,7 +1260,7 @@ function SprintDialog({
   return (
     <Dialog title="New sprint" onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <p className="rounded-md bg-[#f7f8fa] px-3 py-2 text-[10px] text-slate-400">
+        <p className="rounded-md bg-[#f4f6fb] px-3 py-2 text-[10px] text-slate-400">
           Creating sprint for <span className="font-medium text-slate-600">{project.name} ({project.key})</span>
         </p>
         <Field label="Sprint name">
@@ -1253,7 +1284,7 @@ function SprintDialog({
             <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} className={inputCls} />
           </Field>
         </div>
-        <div className="flex justify-end gap-2 border-t border-[#e2e6eb] pt-3">
+        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
           <button className={btnGhost} onClick={onClose} disabled={pending}>
             Cancel
           </button>
@@ -1332,7 +1363,7 @@ function EpicDialog({
             className={inputCls + ' resize-none'}
           />
         </Field>
-        <div className="flex justify-end gap-2 border-t border-[#e2e6eb] pt-3">
+        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
           <button className={btnGhost} onClick={onClose} disabled={pending}>
             Cancel
           </button>
@@ -1414,7 +1445,7 @@ function ProjectDialog({
             </select>
           </Field>
         )}
-        <div className="flex justify-end gap-2 border-t border-[#e2e6eb] pt-3">
+        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
           <button className={btnGhost} onClick={onClose} disabled={pending}>
             Cancel
           </button>
@@ -1467,7 +1498,7 @@ function TeamDialog({
             className={inputCls + ' resize-none'}
           />
         </Field>
-        <div className="flex justify-end gap-2 border-t border-[#e2e6eb] pt-3">
+        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
           <button className={btnGhost} onClick={onClose} disabled={pending}>
             Cancel
           </button>
@@ -1569,7 +1600,7 @@ function TaskDialog({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-[#f1f5f9] px-1.5 py-0.5 text-[10px] font-bold text-[#2068f5]">{task.key}</span>
+              <span className="rounded bg-[#eef2f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f6feb]">{task.key}</span>
               <span className="text-[10px] text-slate-400">
                 {project.key} · {project.name}
               </span>
@@ -1765,7 +1796,7 @@ function TaskDialog({
                   setBlocked(e.target.checked)
                   onUpdate({ blocked: e.target.checked })
                 }}
-                className="h-3.5 w-3.5 accent-[#2068f5]"
+                className="h-3.5 w-3.5 accent-[#1f6feb]"
               />
               Blocked
             </label>
@@ -1776,7 +1807,7 @@ function TaskDialog({
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Description</span>
             {canEdit && !editingDescription && (
-              <button className="flex items-center gap-1 text-[10px] text-[#2068f5] hover:underline" onClick={() => setEditingDescription(true)}>
+              <button className="flex items-center gap-1 text-[10px] text-[#1f6feb] hover:underline" onClick={() => setEditingDescription(true)}>
                 <Pencil size={10} /> Edit
               </button>
             )}
@@ -1791,33 +1822,33 @@ function TaskDialog({
                 className={inputCls + ' resize-none'}
               />
               <div className="flex justify-end gap-2">
-                <button className="rounded-md px-2 py-1 text-[10px] text-slate-400 hover:bg-[#f7f8fa]" onClick={() => {
+                <button className="rounded-md px-2 py-1 text-[10px] text-slate-400 hover:bg-[#f4f6fb]" onClick={() => {
                   setDescription(task.description)
                   setEditingDescription(false)
                 }}>
                   Cancel
                 </button>
-                <button className="rounded-md bg-[#2068f5] px-2 py-1 text-[10px] font-medium text-white hover:bg-[#1557c4]" onClick={saveDescription}>
+                <button className="rounded-md bg-[#1f6feb] px-2 py-1 text-[10px] font-medium text-white hover:bg-[#1963d8]" onClick={saveDescription}>
                   Save
                 </button>
               </div>
             </div>
           ) : description ? (
-            <p className="whitespace-pre-wrap rounded-md bg-[#f7f8fa] px-3 py-2 text-xs leading-relaxed text-slate-600">
+            <p className="whitespace-pre-wrap rounded-md bg-[#f4f6fb] px-3 py-2 text-xs leading-relaxed text-slate-600">
               {description}
             </p>
           ) : (
-            <p className="rounded-md bg-[#f7f8fa] px-3 py-2 text-xs text-slate-300">No description.</p>
+            <p className="rounded-md bg-[#f4f6fb] px-3 py-2 text-xs text-slate-300">No description.</p>
           )}
         </div>
 
-        <div className="border-t border-[#e2e6eb] pt-3">
+        <div className="border-t border-[#e3e8ef] pt-3">
           <button
-            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-[#2068f5]"
+            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-[#1f6feb]"
             onClick={() => setShowComments((v) => !v)}
           >
             <MessageSquare size={13} /> Comments
-            {comments.length > 0 && <span className="rounded-full bg-[#f1f5f9] px-1.5 py-px text-[10px]">{comments.length}</span>}
+            {comments.length > 0 && <span className="rounded-full bg-[#eef2f8] px-1.5 py-px text-[10px]">{comments.length}</span>}
           </button>
           {showComments && (
             <div className="mt-3 flex flex-col gap-3">
@@ -1830,7 +1861,7 @@ function TaskDialog({
                     placeholder="Add a comment…"
                     className={inputCls}
                   />
-                  <button className="shrink-0 rounded-md bg-[#2068f5] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1557c4]" onClick={() => void addComment()} disabled={!commentText.trim()}>
+                  <button className="shrink-0 rounded-md bg-[#1f6feb] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1963d8]" onClick={() => void addComment()} disabled={!commentText.trim()}>
                     Add
                   </button>
                 </div>
@@ -1840,7 +1871,7 @@ function TaskDialog({
               ) : (
                 <div className="flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
                   {comments.map((c) => (
-                    <div key={c.id} className="rounded-md border border-[#e2e6eb] px-3 py-2">
+                    <div key={c.id} className="rounded-md border border-[#e3e8ef] px-3 py-2">
                       <div className="text-[10px] font-medium text-slate-500">
                         {c.author ?? 'Team member'}
                         <span className="ml-2 font-normal text-slate-300">{formatDate(c.createdAt)}</span>
@@ -1854,9 +1885,9 @@ function TaskDialog({
           )}
         </div>
 
-        <div className="flex min-h-[18px] items-center justify-between border-t border-[#e2e6eb] pt-2 text-[10px] text-slate-300">
+        <div className="flex min-h-[18px] items-center justify-between border-t border-[#e3e8ef] pt-2 text-[10px] text-slate-300">
           {pending ? (
-            <span className="flex items-center gap-1 text-[#2068f5]">
+            <span className="flex items-center gap-1 text-[#1f6feb]">
               <CircleDot className="animate-spin" size={11} /> Saving…
             </span>
           ) : (
@@ -1898,33 +1929,35 @@ function Sidebar({
     { label: 'Sprint history', icon: <History size={15} /> },
   ]
   return (
-    <div className="flex h-full w-60 flex-col border-r border-[#e2e6eb] bg-white">
-      <div className="flex items-center gap-2 border-b border-[#e2e6eb] px-4 py-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2068f5] text-sm font-bold text-white">O</div>
+    <div className="flex h-full w-60 flex-col border-r border-[#e3e8ef] bg-white">
+      <div className="flex items-center gap-2 border-b border-[#e3e8ef] px-4 py-3.5">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#1f6feb] to-[#3b82f6] text-sm font-bold text-white shadow-sm">
+          O
+        </div>
         <div>
-          <div className="text-sm font-bold leading-tight text-slate-800">Orbit</div>
+          <div className="text-sm font-semibold leading-tight text-slate-800">Orbit</div>
           <div className="text-[10px] leading-tight text-slate-400">Engineering workspace</div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 border-b border-[#e2e6eb] p-3">
+      <div className="grid grid-cols-2 gap-2 border-b border-[#e3e8ef] p-3">
         <Metric label="Projects" count={projectCount} />
         <Metric label="Active sprints" count={activeSprintCount} />
       </div>
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
         {navItems.map((item) => (
           <button
             key={item.label}
             onClick={() => onNavigate(item.label)}
-            className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium transition-colors ${
-              active === item.label ? 'bg-[#eff6ff] text-[#2068f5]' : 'text-slate-500 hover:bg-[#f7f8fa] hover:text-slate-700'
+            className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium transition-colors ${
+              active === item.label ? 'bg-[#eef4ff] text-[#1f6feb]' : 'text-slate-500 hover:bg-[#f4f6fb] hover:text-slate-700'
             }`}
           >
             {item.icon} {item.label}
           </button>
         ))}
       </nav>
-      <div className="border-t border-[#e2e6eb] p-3">
-        <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[#f7f8fa]">
+      <div className="border-t border-[#e3e8ef] p-3">
+        <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[#f4f6fb]">
           <Avatar name={currentUser.displayName || '?'} color={currentUser.avatarColor} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-medium text-slate-800">{currentUser.displayName || 'Member'}</div>
@@ -1934,7 +1967,7 @@ function Sidebar({
             <Settings2 size={15} />
           </button>
         </div>
-        <button className={btnGhost + ' mt-2 w-full justify-center'} onClick={onCreate}>
+        <button className={btnPrimary + ' mt-2 w-full justify-center'} onClick={onCreate}>
           <Plus size={13} /> Create task
         </button>
       </div>
@@ -2453,7 +2486,7 @@ export default function WorkspaceClient({
   /* ---------- render ---------- */
 
   return (
-    <div className="flex h-screen bg-[#f7f8fa] text-slate-800">
+    <div className="flex h-screen bg-[#f4f6fb] font-sans text-slate-800">
       {/* Desktop sidebar */}
       <div className="hidden h-full md:block">
         <Sidebar
@@ -2491,7 +2524,7 @@ export default function WorkspaceClient({
       )}
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center gap-3 border-b border-[#e2e6eb] bg-white px-4 py-2.5">
+        <header className="flex items-center gap-3 border-b border-[#e3e8ef] bg-white/90 px-4 py-2.5 backdrop-blur">
           <button className="text-slate-400 hover:text-slate-600 md:hidden" onClick={() => setMobileOpen(true)}>
             <Menu size={18} />
           </button>
@@ -2501,7 +2534,7 @@ export default function WorkspaceClient({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by key, title, or project…"
-              className="w-full rounded-md border border-[#e2e6eb] bg-[#f7f8fa] py-1.5 pl-8 pr-8 text-xs outline-none focus:border-[#2068f5] focus:bg-white"
+              className="w-full rounded-md border border-[#e3e8ef] bg-[#f4f6fb] py-1.5 pl-8 pr-8 text-xs outline-none focus:border-[#1f6feb] focus:bg-white"
             />
             {query && (
               <button onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-600">
@@ -2511,8 +2544,8 @@ export default function WorkspaceClient({
           </div>
           <div className="ml-auto flex items-center gap-2">
             {active === 'Sprint board' && boardProject && (
-              <span className="hidden items-center gap-1.5 rounded-full bg-[#f1f5f9] px-2.5 py-1 text-[10px] text-slate-500 sm:flex">
-                <Check size={11} className="text-[#2068f5]" /> {boardProject.name} · {boardProject.key}
+              <span className="hidden items-center gap-1.5 rounded-full bg-[#eef2f8] px-2.5 py-1 text-[10px] text-slate-500 sm:flex">
+                <Check size={11} className="text-[#1f6feb]" /> {boardProject.name} · {boardProject.key}
               </span>
             )}
             {(active === 'Sprint board' || active === 'Backlog' || active === 'My work') && (
@@ -2520,7 +2553,7 @@ export default function WorkspaceClient({
                 value={assigneeFilter}
                 onChange={(e) => setAssigneeFilter(e.target.value)}
                 title="Filter tasks by assignee"
-                className="hidden rounded-md border border-[#e2e6eb] bg-white px-2 py-1.5 text-[10px] text-slate-500 outline-none focus:border-[#2068f5] sm:block"
+                className="hidden rounded-md border border-[#e3e8ef] bg-white px-2 py-1.5 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb] sm:block"
               >
                 <option value="all">All tasks</option>
                 <option value="me">Only my tasks</option>
@@ -2532,11 +2565,11 @@ export default function WorkspaceClient({
               </select>
             )}
             {isPending && (
-              <span className="flex items-center gap-1.5 rounded-full bg-[#f1f5f9] px-2.5 py-1 text-[10px] text-slate-400">
+              <span className="flex items-center gap-1.5 rounded-full bg-[#eef2f8] px-2.5 py-1 text-[10px] text-slate-400">
                 <CircleDot size={11} className="animate-spin" /> Working…
               </span>
             )}
-            <button className="rounded-md p-1.5 text-slate-400 hover:bg-[#f7f8fa] hover:text-slate-600" title="Notifications">
+            <button className="rounded-md p-1.5 text-slate-400 hover:bg-[#f4f6fb] hover:text-slate-600" title="Notifications">
               <Bell size={15} />
             </button>
             <button className={btnPrimary} onClick={openCreate}>

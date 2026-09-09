@@ -26,32 +26,45 @@
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.4);
+
+  --font-sans: var(--font-geist);
+  --font-mono: var(--font-geist-mono);
 }
 
 :root {
   color-scheme: light;
-  --background: oklch(0.978 0.005 250);
-  --foreground: oklch(0.22 0.025 255);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.22 0.025 255);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.025 255);
-  --primary: oklch(0.58 0.2 255);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.95 0.01 250);
-  --secondary-foreground: oklch(0.3 0.03 255);
-  --muted: oklch(0.95 0.01 250);
-  --muted-foreground: oklch(0.54 0.025 255);
-  --accent: oklch(0.95 0.01 250);
-  --accent-foreground: oklch(0.3 0.03 255);
-  --border: oklch(0.91 0.012 250);
-  --input: oklch(0.91 0.012 250);
-  --ring: oklch(0.58 0.2 255);
-  --radius: 0.5rem;
+  --background: #f4f6fb;
+  --foreground: #16202f;
+  --card: #ffffff;
+  --card-foreground: #16202f;
+  --popover: #ffffff;
+  --popover-foreground: #16202f;
+  --primary: #1f6feb;
+  --primary-foreground: #ffffff;
+  --secondary: #e9eef6;
+  --secondary-foreground: #243049;
+  --muted: #e9eef6;
+  --muted-foreground: #5f6b7d;
+  --accent: #e9eef6;
+  --accent-foreground: #243049;
+  --border: #e3e8ef;
+  --input: #e3e8ef;
+  --ring: #1f6feb;
+  --radius: 0.625rem;
 }
 
 @layer base {
   * { @apply border-border outline-ring/50; }
   body { @apply bg-background text-foreground; }
   button, select, input { font: inherit; }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .surface-card {
+    @apply rounded-xl border border-[#e3e8ef] bg-white shadow-[0_1px_2px_rgba(15,35,64,0.04),0_4px_16px_rgba(15,35,64,0.04)];
+  }
+  .surface-soft {
+    @apply rounded-lg border border-[#e3e8ef] bg-[#eef2f8];
+  }
 }
