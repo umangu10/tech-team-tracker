@@ -10,6 +10,7 @@ import {
   CircleDot,
   FolderKanban,
   FolderOpen,
+  History,
   Layers3,
   ListChecks,
   Menu,
@@ -19,6 +20,8 @@ import {
   Search,
   Settings2,
   Trash2,
+  UserMinus,
+  UserPlus,
   Users,
   X,
   Zap,
@@ -28,11 +31,18 @@ import { addTaskComment, createTask, deleteTask, getTaskDetails, updateTask } fr
 import { createEpic, deleteEpic, updateEpic } from '@/app/actions/epics'
 import { completeSprint, createSprint, deleteSprint, startSprint } from '@/app/actions/sprints'
 import { createProject, deleteProject, updateProject } from '@/app/actions/projects'
-import { createTeam, updateMemberRole } from '@/app/actions/teams'
+import {
+  addMemberToTeam,
+  createTeam,
+  listAllUsers,
+  removeMemberFromTeam,
+  updateMemberRole,
+} from '@/app/actions/teams'
 import { authClient } from '@/lib/auth-client'
 import type { Epic, Project, Sprint, Task, Team, TeamMember } from '@/lib/db/schema'
 import {
   DEFAULT_AREA,
+  DEFAULT_AVATAR_COLOR,
   DEFAULT_POINTS,
   EPIC_STATUSES,
   TASK_PRIORITIES,
@@ -597,7 +607,7 @@ function SprintBoard({
               className="shrink-0 rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-600 hover:bg-emerald-100"
               onClick={() => onCompleteSprint(selectedSprint)}
             >
-              Complete
+              End sprint
             </button>
           )}
           {canManage && selectedSprint.status !== 'active' && (
@@ -797,7 +807,11 @@ function TeamsView({
   currentUser,
   isAdminOf,
   canCreateTeam,
+  allUsers,
+  allUsersLoading,
   onChangeRole,
+  onAddMember,
+  onRemoveMember,
   onCreate,
 }: {
   teams: Team[]
@@ -805,14 +819,22 @@ function TeamsView({
   currentUser: TeamMember
   isAdminOf: (teamId: string) => boolean
   canCreateTeam: boolean
+  allUsers: Awaited<ReturnType<typeof listAllUsers>> | null
+  allUsersLoading: boolean
   onChangeRole: (member: TeamMember, role: string) => void
+  onAddMember: (teamId: string, targetUserId: string) => void
+  onRemoveMember: (member: TeamMember) => void
   onCreate: () => void
 }) {
+  const [addFor, setAddFor] = useState<string | null>(null)
+  const [pickId, setPickId] = useState('')
   return (
     <div className="flex flex-col gap-3">
       {teams.map((team) => {
         const teamMembers = members.filter((m) => m.teamId === team.id)
         const admin = isAdminOf(team.id)
+        const teamUserIds = new Set(teamMembers.map((m) => m.userId))
+        const available = (allUsers ?? []).filter((u) => !teamUserIds.has(u.id))
         return (
           <div key={team.id} className="rounded-lg border border-[#e2e6eb] bg-white p-4">
             <div className="flex items-center gap-2">
@@ -834,22 +856,152 @@ function TeamsView({
                     {m.userId === currentUser.userId && <span className="ml-1 text-[10px] text-slate-400">(you)</span>}
                   </span>
                   {admin ? (
-                    <select
-                      value={m.role}
-                      onChange={(e) => onChangeRole(m, e.target.value)}
-                      className="rounded border border-[#e2e6eb] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#2068f5]"
-                    >
-                      {['admin', 'lead', 'member'].map((r) => (
-                        <option key={r} value={r}>
-                          {r}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={m.role}
+                        onChange={(e) => onChangeRole(m, e.target.value)}
+                        className="rounded border border-[#e2e6eb] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#2068f5]"
+                      >
+                        {['admin', 'lead', 'member'].map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                      {m.userId !== currentUser.userId && (
+                        <button
+                          onClick={() => onRemoveMember(m)}
+                          title="Remove from team"
+                          className="text-slate-300 transition-colors hover:text-red-500"
+                        >
+                          <UserMinus size={13} />
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">{m.role}</span>
                   )}
                 </div>
               ))}
+            </div>
+            {admin && (
+              <div className="mt-3 border-t border-[#eef1f5] pt-3">
+                {addFor === team.id ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={pickId}
+                      onChange={(e) => setPickId(e.target.value)}
+                      className={inputCls + ' flex-1'}
+                    >
+                      <option value="">Select a user…</option>
+                      {available.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name || u.email || u.id}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className={btnPrimary}
+                      disabled={!pickId}
+                      onClick={() => {
+                        onAddMember(team.id, pickId)
+                        setAddFor(null)
+                        setPickId('')
+                      }}
+                    >
+                      <UserPlus size={13} /> Add
+                    </button>
+                    <button
+                      className={btnGhost}
+                      onClick={() => {
+                        setAddFor(null)
+                        setPickId('')
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className={btnGhost}
+                    disabled={allUsersLoading || !allUsers || available.length === 0}
+                    onClick={() => {
+                      setPickId('')
+                      setAddFor(team.id)
+                    }}
+                  >
+                    <UserPlus size={13} /> Add member
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function HistoryView({
+  sprints,
+  projects,
+  tasks,
+}: {
+  sprints: Sprint[]
+  projects: Project[]
+  tasks: TaskWithProject[]
+}) {
+  const completed = sprints
+    .filter((s) => s.status === 'completed')
+    .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
+
+  if (completed.length === 0) {
+    return (
+      <Empty
+        icon={<History size={30} />}
+        title="No completed sprints yet"
+        hint="End a sprint to archive its results here."
+      />
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {completed.map((sprint) => {
+        const project = projects.find((p) => p.id === sprint.projectId)
+        const sprintTasks = tasks.filter((t) => t.sprintId === sprint.id)
+        const delivered = sprintTasks.filter((t) => t.status === 'Done')
+        const points = delivered.reduce((sum, t) => sum + (t.points ?? 0), 0)
+        return (
+          <div key={sprint.id} className="rounded-lg border border-[#e2e6eb] bg-white p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2068f5]/10 text-[10px] font-bold text-[#2068f5]">
+                {project?.key ?? '—'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-slate-800">{sprint.name}</div>
+                <div className="text-[10px] text-slate-400">
+                  {project?.name ?? 'Unknown project'} · {formatDate(sprint.completedAt)}
+                </div>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+                Ended
+              </span>
+            </div>
+            {sprint.goal && <p className="mt-2 text-xs text-slate-500">{sprint.goal}</p>}
+            <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-slate-500">
+              <span>
+                <Check size={11} className="mr-1 inline text-emerald-500" />
+                <b className="text-slate-700">{delivered.length}</b> delivered
+              </span>
+              <span>
+                <Zap size={11} className="mr-1 inline text-amber-500" />
+                <b className="text-slate-700">{points}</b> pts completed
+              </span>
+              <span>
+                <CircleDot size={11} className="mr-1 inline text-slate-400" />
+                <b className="text-slate-700">{sprintTasks.length - delivered.length}</b> not completed
+              </span>
             </div>
           </div>
         )
@@ -1743,14 +1895,15 @@ function Sidebar({
     { label: 'Epics', icon: <Zap size={15} /> },
     { label: 'Projects', icon: <FolderOpen size={15} /> },
     { label: 'Teams', icon: <Users size={15} /> },
+    { label: 'Sprint history', icon: <History size={15} /> },
   ]
   return (
     <div className="flex h-full w-60 flex-col border-r border-[#e2e6eb] bg-white">
       <div className="flex items-center gap-2 border-b border-[#e2e6eb] px-4 py-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2068f5] text-sm font-bold text-white">T</div>
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2068f5] text-sm font-bold text-white">O</div>
         <div>
-          <div className="text-sm font-bold leading-tight text-slate-800">TaskTrack</div>
-          <div className="text-[10px] leading-tight text-slate-400">Tech Team Tracker</div>
+          <div className="text-sm font-bold leading-tight text-slate-800">Orbit</div>
+          <div className="text-[10px] leading-tight text-slate-400">Engineering workspace</div>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 border-b border-[#e2e6eb] p-3">
@@ -1829,6 +1982,26 @@ export default function WorkspaceClient({
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [createTeamOpen, setCreateTeamOpen] = useState(false)
   const [boardProjectId, setBoardProjectId] = useState<string | null>(initialProjects[0]?.id ?? null)
+  const [assigneeFilter, setAssigneeFilter] = useState<string>('all')
+  const [allUsers, setAllUsers] = useState<Awaited<ReturnType<typeof listAllUsers>> | null>(null)
+  const [allUsersLoading, setAllUsersLoading] = useState(false)
+
+  useEffect(() => {
+    if (active !== 'Teams' || allUsers !== null) return
+    let cancelled = false
+    setAllUsersLoading(true)
+    listAllUsers()
+      .then((users) => {
+        if (!cancelled) setAllUsers(users)
+      })
+      .catch((e) => setError(formatError(e)))
+      .finally(() => {
+        if (!cancelled) setAllUsersLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [active, allUsers])
 
   const projectMap = new Map(projects.map((p) => [p.id, p]))
   const teamMap = new Map(teams.map((t) => [t.id, t]))
@@ -1838,6 +2011,17 @@ export default function WorkspaceClient({
     const q = query.toLowerCase()
     return `${task.key} ${task.title} ${task.projectName}`.toLowerCase().includes(q)
   })
+
+  const scopedTasks = visibleTasks.filter((task) => {
+    if (assigneeFilter === 'all') return true
+    if (assigneeFilter === 'me') return task.assigneeId === currentUser.userId
+    return task.assigneeId === assigneeFilter
+  })
+
+  const assigneeOptions = members
+    .filter((m, i, arr) => arr.findIndex((x) => x.userId === m.userId) === i)
+    .filter((m) => m.displayName)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
 
   const roleForTeam = (teamId: string): string | undefined =>
     members.find((m) => m.userId === currentUser.userId && m.teamId === teamId)?.role
@@ -2198,12 +2382,51 @@ export default function WorkspaceClient({
     })
   }
 
+  function submitAddMember(teamId: string, targetUserId: string) {
+    setError('')
+    const picked = allUsers?.find((u) => u.id === targetUserId)
+    startTransition(async () => {
+      try {
+        await addMemberToTeam(teamId, targetUserId)
+        const membership: TeamMember = {
+          id: crypto.randomUUID(),
+          teamId,
+          userId: targetUserId,
+          role: 'member',
+          displayName: picked?.name || picked?.email.split('@')[0] || '',
+          avatarColor: DEFAULT_AVATAR_COLOR,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }
+        setMembers((items) => [...items, membership])
+      } catch (e) {
+        setError(formatError(e))
+      }
+    })
+  }
+
+  function submitRemoveMember(member: TeamMember) {
+    setError('')
+    const removed = { ...member }
+    setMembers((items) => items.filter((m) => m.id !== member.id))
+    startTransition(async () => {
+      try {
+        await removeMemberFromTeam(member.teamId, member.id)
+      } catch (e) {
+        setError(formatError(e))
+        setMembers((items) => (items.some((m) => m.id === removed.id) ? items : [...items, removed]))
+      }
+    })
+  }
+
   const openCreate = () => {
     setCreateFor(projects[0]?.id ?? null)
   }
 
   const signOut = () => {
-    void authClient.signOut()
+    void authClient.signOut().then(() => {
+      window.location.href = '/sign-in'
+    })
   }
 
   /* ---------- derived view data ---------- */
@@ -2215,9 +2438,9 @@ export default function WorkspaceClient({
   const activeSprintCount = sprints.filter((s) => s.status === 'active').length
 
   const boardProject = boardProjectId ? projectMap.get(boardProjectId) : undefined
-  const boardTasks = boardProject ? visibleTasks.filter((t) => t.projectId === boardProject.id) : []
+  const boardTasks = boardProject ? scopedTasks.filter((t) => t.projectId === boardProject.id) : []
 
-  const backlogTasks = visibleTasks.filter((t) => t.sprintId === null)
+  const backlogTasks = scopedTasks.filter((t) => t.sprintId === null)
   const sprintOptionsFor = (task: TaskWithProject) =>
     sprints
       .filter((s) => s.projectId === task.projectId && (s.status === 'planned' || s.status === 'active'))
@@ -2291,6 +2514,22 @@ export default function WorkspaceClient({
               <span className="hidden items-center gap-1.5 rounded-full bg-[#f1f5f9] px-2.5 py-1 text-[10px] text-slate-500 sm:flex">
                 <Check size={11} className="text-[#2068f5]" /> {boardProject.name} · {boardProject.key}
               </span>
+            )}
+            {(active === 'Sprint board' || active === 'Backlog' || active === 'My work') && (
+              <select
+                value={assigneeFilter}
+                onChange={(e) => setAssigneeFilter(e.target.value)}
+                title="Filter tasks by assignee"
+                className="hidden rounded-md border border-[#e2e6eb] bg-white px-2 py-1.5 text-[10px] text-slate-500 outline-none focus:border-[#2068f5] sm:block"
+              >
+                <option value="all">All tasks</option>
+                <option value="me">Only my tasks</option>
+                {assigneeOptions.map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {m.displayName}
+                  </option>
+                ))}
+              </select>
             )}
             {isPending && (
               <span className="flex items-center gap-1.5 rounded-full bg-[#f1f5f9] px-2.5 py-1 text-[10px] text-slate-400">
@@ -2538,10 +2777,24 @@ export default function WorkspaceClient({
                   currentUser={currentUser}
                   isAdminOf={(teamId) => roleForTeam(teamId) === 'admin'}
                   canCreateTeam={canCreateProject}
+                  allUsers={allUsers}
+                  allUsersLoading={allUsersLoading}
                   onChangeRole={changeRole}
+                  onAddMember={submitAddMember}
+                  onRemoveMember={submitRemoveMember}
                   onCreate={() => setCreateTeamOpen(true)}
                 />
               )}
+            </div>
+          )}
+
+          {active === 'Sprint history' && (
+            <div className="flex flex-col gap-4">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800">Sprint history</h2>
+                <p className="text-xs text-slate-400">Completed sprints and what they delivered.</p>
+              </div>
+              <HistoryView sprints={sprints} projects={projects} tasks={visibleTasks} />
             </div>
           )}
         </div>

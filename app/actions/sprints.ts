@@ -100,7 +100,7 @@ export async function completeSprint(id: string) {
   await db.transaction(async (tx) => {
     await tx
       .update(sprint)
-      .set({ status: 'completed', completedAt: new Date(), updatedAt: new Date() })
+      .set({ status: 'completed', completedAt: new Date(), endsAt: row.endsAt ?? new Date(), updatedAt: new Date() })
       .where(eq(sprint.id, id))
     await tx
       .update(task)

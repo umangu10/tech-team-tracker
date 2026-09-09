@@ -13,6 +13,12 @@ const trustedOrigins = [
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema: { user, session, account, verification } }),
   emailAndPassword: { enabled: true },
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    },
+  },
   baseURL: origin(process.env.BETTER_AUTH_URL) || origin(process.env.VERCEL_PROJECT_PRODUCTION_URL) || origin(process.env.VERCEL_URL) || origin(process.env.V0_RUNTIME_URL) || 'http://localhost:3000',
   trustedOrigins,
 })
