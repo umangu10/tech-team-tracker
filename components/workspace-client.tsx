@@ -153,25 +153,32 @@ function Dialog({
   onClose,
   children,
   wide = false,
+  fullScreen = false,
 }: {
   title: string
   onClose: () => void
   children: ReactNode
   wide?: boolean
+  fullScreen?: boolean
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/30 ${fullScreen ? 'p-0' : 'p-4'}`}
+      onClick={onClose}
+    >
       <div
-        className={`flex max-h-[90vh] w-full ${wide ? 'max-w-2xl' : 'max-w-md'} flex-col overflow-hidden rounded-xl bg-white shadow-xl`}
+        className={`flex w-full flex-col overflow-hidden bg-white shadow-xl ${
+          fullScreen ? 'h-full max-h-none max-w-none rounded-none' : `max-h-[90vh] ${wide ? 'max-w-2xl' : 'max-w-md'} rounded-xl`
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-[#e3e8ef] px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-[#e3e8ef] px-5 py-3">
           <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-          <button onClick={onClose} className="text-slate-300 hover:text-slate-600">
+          <button onClick={onClose} className="text-slate-300 hover:text-slate-600" aria-label="Close dialog">
             <X size={16} />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-4">{children}</div>
+        <div className={`min-h-0 overflow-y-auto ${fullScreen ? 'px-6 py-6 lg:px-12 lg:py-8' : 'px-5 py-4'}`}>{children}</div>
       </div>
     </div>
   )
@@ -1595,7 +1602,7 @@ function TaskDialog({
   }
 
   return (
-    <Dialog title="Task details" onClose={onClose} wide>
+    <Dialog title="Task details" onClose={onClose} fullScreen>
       <div className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
