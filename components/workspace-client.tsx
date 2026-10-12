@@ -1,16 +1,19 @@
 'use client'
 
 import { useEffect, useState, useTransition } from 'react'
-import type { DragEvent, ReactNode } from 'react'
+import type { DragEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   AlertCircle,
+  AlertTriangle,
   Bell,
   CalendarDays,
   Check,
   CircleDot,
   FolderKanban,
   FolderOpen,
+  GitBranch,
   History,
+  LayoutDashboard,
   Layers3,
   ListChecks,
   Menu,
@@ -19,7 +22,9 @@ import {
   Plus,
   Search,
   Settings2,
+  Tag,
   Trash2,
+  TrendingUp,
   UserMinus,
   UserPlus,
   Users,
@@ -27,7 +32,16 @@ import {
   Zap,
 } from 'lucide-react'
 
-import { addTaskComment, createTask, deleteTask, getTaskDetails, updateTask } from '@/app/actions/tasks'
+import {
+  addTaskComment,
+  createSubtask,
+  createTask,
+  deleteSubtask,
+  deleteTask,
+  getTaskDetails,
+  setSubtaskDone,
+  updateTask,
+} from '@/app/actions/tasks'
 import { createEpic, deleteEpic, updateEpic } from '@/app/actions/epics'
 import { completeSprint, createSprint, deleteSprint, startSprint } from '@/app/actions/sprints'
 import { createProject, deleteProject, updateProject } from '@/app/actions/projects'
@@ -45,6 +59,10 @@ import {
   DEFAULT_AVATAR_COLOR,
   DEFAULT_POINTS,
   EPIC_STATUSES,
+  MAX_LABELS_PER_TASK,
+  normalizeLabel,
+  parseLabels,
+  serializeLabels,
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TYPES,
@@ -57,6 +75,13 @@ const POINTS = ['0', '1', '2', '3', '5', '8']
 
 function formatError(e: unknown): string {
   return e instanceof Error ? e.message : 'Failed to save changes'
+}
+
+function greeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 18) return 'Good afternoon'
+  return 'Good evening'
 }
 
 function formatDate(value?: Date | string | null): string {
@@ -101,8 +126,8 @@ function Avatar({
 }) {
   return (
     <div
-      className={`flex shrink-0 items-center justify-center rounded-full ${color}`}
-      style={{ width: size, height: size, fontSize: size * 0.36 }}
+      className={`flex shrink-0 items-center justify-center rounded-full font-medium text-white ring-1 ring-black/5 ${color}`}
+      style={{ width: size, height: size, fontSize: Math.max(9, size * 0.38) }}
       title={name}
     >
       {initials(name)}
@@ -112,9 +137,9 @@ function Avatar({
 
 function Metric({ label, count }: { label: string; count: number }) {
   return (
-    <div className="rounded-lg border border-[#e3e8ef] bg-[#f4f6fb] px-3 py-2">
-      <div className="text-lg font-bold leading-tight text-slate-800">{count}</div>
-      <div className="text-[10px] leading-tight text-slate-400">{label}</div>
+    <div className="rounded-lg bg-zinc-50 px-3 py-2">
+      <div className="text-lg font-semibold leading-tight tracking-tight text-zinc-900">{count}</div>
+      <div className="mt-0.5 text-xs leading-tight text-zinc-500">{label}</div>
     </div>
   )
 }
@@ -131,65 +156,263 @@ function Empty({
   action?: { label: string; onClick: () => void }
 }) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-[#e3e8ef] bg-white/60 px-6 py-14 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#eef2f8] text-[#1f6feb]">
-        {icon}
-      </div>
-      <div>
-        <div className="text-sm font-medium text-slate-800">{title}</div>
-        <div className="mt-0.5 text-xs text-slate-400">{hint}</div>
+    <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-zinc-200 bg-white px-6 py-16 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-100 text-zinc-400">{icon}</div>
+      <div className="max-w-xs">
+        <div className="text-sm font-medium text-zinc-900">{title}</div>
+        <div className="mt-1 text-sm leading-relaxed text-zinc-500">{hint}</div>
       </div>
       {action && (
         <button className={btnPrimary} onClick={action.onClick}>
-          <Plus size={13} /> {action.label}
+          <Plus size={15} /> {action.label}
         </button>
       )}
     </div>
   )
 }
 
-function Dialog({
+/** Escape-to-close + background scroll lock for any overlay surface. */
+function useDismiss(onClose: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [onClose])
+}
+
+/**
+ * Right-side slide-over. Used for create/edit flows that need room to think:
+ * wide column, sticky header and footer, scrollable body.
+ */
+function Drawer({
   title,
+  description,
   onClose,
   children,
-  wide = false,
-  fullScreen = false,
+  footer,
+  width = 'md',
 }: {
   title: string
+  description?: string
   onClose: () => void
   children: ReactNode
-  wide?: boolean
-  fullScreen?: boolean
+  footer?: ReactNode
+  width?: 'md' | 'lg' | 'xl'
 }) {
+  useDismiss(onClose)
+  const widths = { md: 'sm:max-w-xl', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }
   return (
-    <div
-      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/30 ${fullScreen ? 'p-0' : 'p-4'}`}
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="animate-overlay-in absolute inset-0 bg-zinc-950/25 backdrop-blur-[2px]" onClick={onClose} />
       <div
-        className={`flex w-full flex-col overflow-hidden bg-white shadow-xl ${
-          fullScreen ? 'h-full max-h-none max-w-none rounded-none' : `max-h-[90vh] ${wide ? 'max-w-2xl' : 'max-w-md'} rounded-xl`
-        }`}
-        onClick={(e) => e.stopPropagation()}
+        className={`animate-drawer-in relative flex h-full w-full flex-col bg-white shadow-2xl sm:w-full ${widths[width]}`}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-[#e3e8ef] px-5 py-3">
-          <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-          <button onClick={onClose} className="text-slate-300 hover:text-slate-600" aria-label="Close dialog">
-            <X size={16} />
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-200 px-6 py-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold tracking-tight text-zinc-900">{title}</h3>
+            {description && <p className="mt-0.5 text-sm text-zinc-500">{description}</p>}
+          </div>
+          <button onClick={onClose} className={iconBtn} aria-label="Close">
+            <X size={18} />
           </button>
         </div>
-        <div className={`min-h-0 overflow-y-auto ${fullScreen ? 'px-6 py-6 lg:px-12 lg:py-8' : 'px-5 py-4'}`}>{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
+        {footer && (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-200 bg-zinc-50/80 px-6 py-3.5">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+/** Centered modal for short, focused forms. */
+function Dialog({
+  title,
+  description,
+  onClose,
+  children,
+  footer,
+  wide = false,
+}: {
+  title: string
+  description?: string
+  onClose: () => void
+  children: ReactNode
+  footer?: ReactNode
+  wide?: boolean
+}) {
+  useDismiss(onClose)
   return (
-    <label className="block">
-      <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</span>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div className="animate-overlay-in absolute inset-0 bg-zinc-950/25 backdrop-blur-[2px]" onClick={onClose} />
+      <div
+        className={`animate-modal-in relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${
+          wide ? 'max-w-2xl' : 'max-w-lg'
+        }`}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-200 px-6 py-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold tracking-tight text-zinc-900">{title}</h3>
+            {description && <p className="mt-0.5 text-sm text-zinc-500">{description}</p>}
+          </div>
+          <button onClick={onClose} className={iconBtn} aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="min-h-0 overflow-y-auto px-6 py-5">{children}</div>
+        {footer && (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-zinc-200 bg-zinc-50/80 px-6 py-3.5">
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Field({
+  label,
+  children,
+  hint,
+  className = '',
+}: {
+  label: string
+  children: ReactNode
+  hint?: string
+  className?: string
+}) {
+  return (
+    <label className={`block ${className}`}>
+      <span className={labelCls}>{label}</span>
       {children}
+      {hint && <span className="mt-1 block text-xs text-zinc-400">{hint}</span>}
     </label>
+  )
+}
+
+/* ---------- Labels ---------- */
+
+function LabelChips({
+  labels,
+  onRemove,
+  size = 'sm',
+}: {
+  labels: string[]
+  onRemove?: (label: string) => void
+  size?: 'xs' | 'sm'
+}) {
+  if (labels.length === 0) return null
+  const text = size === 'xs' ? 'text-xs' : 'text-xs'
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {labels.map((label) => (
+        <span
+          key={label}
+          className={`inline-flex items-center gap-0.5 rounded bg-zinc-100 px-1.5 py-px font-medium text-zinc-600 ${text}`}
+        >
+          <Tag size={size === 'xs' ? 8 : 9} className="text-zinc-500" />
+          {label}
+          {onRemove && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemove(label)
+              }}
+              className="ml-0.5 text-zinc-500 hover:text-red-500"
+              aria-label={`Remove label ${label}`}
+            >
+              <X size={size === 'xs' ? 8 : 10} />
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function LabelEditor({
+  value,
+  suggestions,
+  onChange,
+  disabled = false,
+}: {
+  value: string[]
+  suggestions: string[]
+  onChange: (labels: string[]) => void
+  disabled?: boolean
+}) {
+  const [text, setText] = useState('')
+
+  const add = (raw: string) => {
+    const label = normalizeLabel(raw)
+    if (!label || value.includes(label) || value.length >= MAX_LABELS_PER_TASK) {
+      setText('')
+      return
+    }
+    onChange([...value, label])
+    setText('')
+  }
+
+  const remove = (label: string) => onChange(value.filter((l) => l !== label))
+
+  const matches = text.trim()
+    ? suggestions
+        .filter((s) => s.includes(normalizeLabel(text)) && !value.includes(s))
+        .slice(0, 6)
+    : []
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <LabelChips labels={value} onRemove={disabled ? undefined : remove} />
+      {!disabled && (
+        <div className="relative">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ',') {
+                e.preventDefault()
+                add(text)
+              } else if (e.key === 'Backspace' && !text && value.length) {
+                remove(value[value.length - 1])
+              }
+            }}
+            placeholder={value.length >= MAX_LABELS_PER_TASK ? 'Label limit reached' : 'Add label, press Enter'}
+            disabled={value.length >= MAX_LABELS_PER_TASK}
+            className={inputCls}
+          />
+          {matches.length > 0 && (
+            <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg">
+              {matches.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => add(s)}
+                  className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-zinc-700 hover:bg-zinc-100"
+                >
+                  <Tag size={10} className="text-zinc-500" /> {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -200,6 +423,7 @@ function TaskRow({
   currentUser,
   members,
   canEdit,
+  subtask,
   onSelect,
   onStatus,
   onDelete,
@@ -210,6 +434,7 @@ function TaskRow({
   currentUser: TeamMember
   members: TeamMember[]
   canEdit: boolean
+  subtask?: { done: number; total: number } | null
   onSelect: (task: TaskWithProject) => void
   onStatus: (task: TaskWithProject, status: string) => void
   onDelete: (task: TaskWithProject) => void
@@ -217,50 +442,52 @@ function TaskRow({
   onAssignSprint?: (task: TaskWithProject, sprintId: string) => void
 }) {
   const assignee = members.find((m) => m.userId === task.assigneeId)
+  const labels = parseLabels(task.labels)
   return (
     <div
       onClick={() => onSelect(task)}
-      className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#e3e8ef] bg-white px-3 py-2 transition-colors hover:border-[#1f6feb]/40 hover:bg-[#f6f8fd]"
+      className="flex cursor-pointer items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 transition-all hover:border-zinc-300 hover:shadow-[0_2px_8px_rgba(24,24,27,0.05)]"
     >
-      <span className="shrink-0 rounded bg-[#eef2f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f6feb]">
-        {task.key}
-      </span>
+      <span className={keyChip}>{task.key}</span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-medium text-slate-800">{task.title}</div>
-        <div className="mt-0.5 flex items-center gap-2 text-[10px] text-slate-400">
+        <div className="truncate text-sm font-medium text-zinc-900">{task.title}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
           <span className="truncate">{task.projectName}</span>
-          {task.priority !== 'Medium' && (
-            <span className={`rounded px-1 py-px font-medium ${priorityColors[task.priority] ?? 'bg-slate-100 text-slate-500'}`}>
-              {task.priority}
-            </span>
-          )}
+          {task.priority !== 'Medium' && <PriorityTag priority={task.priority} />}
           {task.dueDate && (
             <span className="flex items-center gap-1">
-              <CalendarDays size={11} /> {formatDate(task.dueDate)}
+              <CalendarDays size={12} /> {formatDate(task.dueDate)}
             </span>
           )}
+          {subtask && subtask.total > 0 && (
+            <span className="flex items-center gap-1" title={`${subtask.done} of ${subtask.total} subtasks done`}>
+              <GitBranch size={12} /> {subtask.done}/{subtask.total}
+            </span>
+          )}
+          {labels.length > 0 && <LabelChips labels={labels} size="xs" />}
         </div>
       </div>
       {assignee ? (
-        <Avatar name={assignee.displayName || '?'} color={assignee.avatarColor} size={22} />
+        <Avatar name={assignee.displayName || '?'} color={assignee.avatarColor} size={26} />
       ) : (
         <div
-          className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-slate-100 text-[8px] text-slate-400"
+          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-dashed border-zinc-300 text-[10px] text-zinc-400"
           title="Unassigned"
         >
-          —
+          ?
         </div>
       )}
       {sprintOptions && onAssignSprint && (
         <select
           value=""
-          className="max-w-[110px] rounded border border-[#e3e8ef] bg-white px-1 py-1 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb]"
+          aria-label="Move to sprint"
+          className={`hidden max-w-[130px] sm:block ${selectMini}`}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => {
             if (e.target.value) onAssignSprint(task, e.target.value)
           }}
         >
-          <option value="">→ Sprint</option>
+          <option value="">Move to…</option>
           {sprintOptions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -271,7 +498,8 @@ function TaskRow({
       {canEdit ? (
         <select
           value={task.status}
-          className="rounded border border-[#e3e8ef] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb]"
+          aria-label="Change status"
+          className={`hidden sm:block ${selectMini}`}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onStatus(task, e.target.value)}
         >
@@ -282,9 +510,7 @@ function TaskRow({
           ))}
         </select>
       ) : (
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusStyles[task.status] ?? 'bg-slate-100 text-slate-500'}`}>
-          {task.status}
-        </span>
+        <StatusPill status={task.status} />
       )}
       {canEdit && (
         <button
@@ -292,10 +518,11 @@ function TaskRow({
             e.stopPropagation()
             onDelete(task)
           }}
-          className="shrink-0 text-slate-300 hover:text-red-500"
+          className={iconBtn + ' hover:bg-red-50 hover:text-red-600'}
           title="Delete task"
+          aria-label={`Delete ${task.key}`}
         >
-          <Trash2 size={13} />
+          <Trash2 size={15} />
         </button>
       )}
     </div>
@@ -307,6 +534,7 @@ function CompactTask({
   members,
   currentUser,
   canManage,
+  subtask,
   onSelect,
   onStatus,
   onDelete,
@@ -315,11 +543,13 @@ function CompactTask({
   members: TeamMember[]
   currentUser: TeamMember
   canManage: boolean
+  subtask?: { done: number; total: number } | null
   onSelect: (task: TaskWithProject) => void
   onStatus: (task: TaskWithProject, status: string) => void
   onDelete: (task: TaskWithProject) => void
 }) {
   const assignee = members.find((m) => m.userId === task.assigneeId)
+  const labels = parseLabels(task.labels)
   const [dragging, setDragging] = useState(false)
   return (
     <div
@@ -332,25 +562,39 @@ function CompactTask({
       }}
       onDragEnd={() => setDragging(false)}
       onClick={() => onSelect(task)}
-      className={`group cursor-pointer rounded-md border border-[#e3e8ef] bg-white p-2 transition-colors hover:border-[#1f6feb]/40 hover:bg-[#f6f8fd] ${dragging ? 'opacity-40' : ''} ${canManage ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+      className={`group rounded-lg border border-zinc-200 bg-white p-3 shadow-[0_1px_2px_rgba(24,24,27,0.03)] transition-all hover:border-zinc-300 hover:shadow-[0_2px_8px_rgba(24,24,27,0.06)] ${
+        dragging ? 'opacity-40' : ''
+      } ${canManage ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
     >
-      <div className="flex items-center gap-1.5">
-        <span className="shrink-0 rounded bg-[#eef2f8] px-1 py-px text-[9px] font-bold text-[#1f6feb]">{task.key}</span>
-        <span className={`ml-auto rounded px-1 py-px text-[9px] font-medium ${priorityColors[task.priority] ?? 'bg-slate-100 text-slate-500'}`}>
-          {task.priority}
+      <div className="flex items-center gap-2">
+        <span className={keyChip}>{task.key}</span>
+        <span className="ml-auto">
+          <PriorityTag priority={task.priority} />
         </span>
       </div>
-      <div className="mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-slate-800">{task.title}</div>
-      {task.dueDate && (
-        <div className="mt-1 flex items-center gap-1 text-[9px] text-slate-400">
-          <CalendarDays size={10} /> {formatDate(task.dueDate)}
+      <div className="mt-2 line-clamp-3 text-sm font-medium leading-snug text-zinc-900">{task.title}</div>
+      {labels.length > 0 && (
+        <div className="mt-1.5">
+          <LabelChips labels={labels} size="xs" />
         </div>
       )}
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        {task.dueDate && (
+          <span className="flex items-center gap-1">
+            <CalendarDays size={10} /> {formatDate(task.dueDate)}
+          </span>
+        )}
+        {subtask && subtask.total > 0 && (
+          <span className="flex items-center gap-1" title={`${subtask.done} of ${subtask.total} subtasks done`}>
+            <GitBranch size={10} /> {subtask.done}/{subtask.total}
+          </span>
+        )}
+      </div>
       <div className="mt-2 flex items-center justify-between">
         {assignee ? (
           <Avatar name={assignee.displayName || '?'} color={assignee.avatarColor} size={18} />
         ) : (
-          <div className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-slate-100 text-[7px] text-slate-400">—</div>
+          <div className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-zinc-100 text-[7px] text-zinc-500">—</div>
         )}
         <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {task.status !== 'Done' && (
@@ -359,7 +603,7 @@ function CompactTask({
                 e.stopPropagation()
                 onStatus(task, 'Done')
               }}
-              className="rounded p-1 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600"
+              className="rounded p-1 text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600"
               title="Mark done"
             >
               <Check size={12} />
@@ -371,7 +615,7 @@ function CompactTask({
                 e.stopPropagation()
                 onDelete(task)
               }}
-              className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+              className="rounded p-1 text-zinc-500 hover:bg-red-50 hover:text-red-500"
               title="Delete task"
             >
               <Trash2 size={12} />
@@ -391,6 +635,7 @@ function Column({
   members,
   currentUser,
   canManage,
+  subtaskFor,
   onSelect,
   onStatus,
   onDelete,
@@ -401,6 +646,7 @@ function Column({
   members: TeamMember[]
   currentUser: TeamMember
   canManage: (task: TaskWithProject) => boolean
+  subtaskFor?: (taskId: string) => { done: number; total: number } | null
   onSelect: (task: TaskWithProject) => void
   onStatus: (task: TaskWithProject, status: string) => void
   onDelete: (task: TaskWithProject) => void
@@ -415,8 +661,8 @@ function Column({
   const leave = () => setOver(false)
   return (
     <div
-      className={`flex flex-col gap-2 rounded-lg border bg-[#f6f7fb] p-2 transition-colors ${
-        over ? 'border-[#1f6feb] bg-[#eef4ff]' : 'border-[#e3e8ef]'
+      className={`flex flex-col gap-2.5 rounded-xl border border-dashed p-2.5 transition-colors ${
+        over ? 'border-zinc-400 bg-zinc-100' : 'border-transparent bg-zinc-100/70'
       }`}
       onDragOver={(e) => {
         if (!onDrop) return
@@ -431,16 +677,14 @@ function Column({
         onDrop(e, label)
       }}
     >
-      <div className="flex items-center gap-2 px-1">
-        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusStyles[label] ?? 'bg-slate-100 text-slate-500'}`}>
-          {label}
-        </span>
-        <span className="text-[10px] text-slate-400">{tasks.length}</span>
+      <div className="flex items-center gap-2 px-1 pt-0.5">
+        <StatusPill status={label} />
+        <span className="text-xs font-medium text-zinc-400">{tasks.length}</span>
       </div>
       <div className="flex min-h-[80px] flex-col gap-2">
         {tasks.length === 0 ? (
-          <div className="flex h-16 items-center justify-center rounded-md border border-dashed border-[#e3e8ef] text-[10px] text-slate-300">
-            {onDrop ? 'Drop tasks here' : 'No tasks'}
+          <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-zinc-300 text-xs text-zinc-400">
+            {onDrop ? 'Drop here' : 'Empty'}
           </div>
         ) : (
           tasks.map((task) => (
@@ -450,6 +694,7 @@ function Column({
               members={members}
               currentUser={currentUser}
               canManage={canManage(task)}
+              subtask={subtaskFor ? subtaskFor(task.id) : null}
               onSelect={onSelect}
               onStatus={onStatus}
               onDelete={onDelete}
@@ -462,32 +707,111 @@ function Column({
 }
 
 const sprintDot: Record<string, string> = {
-  planned: 'bg-slate-300',
+  planned: 'bg-zinc-400',
   active: 'bg-emerald-500',
-  completed: 'bg-slate-400',
+  completed: 'bg-zinc-500',
 }
 
+/* Status and priority read as quiet tinted chips. Each pairs a dot/label so the
+   meaning never depends on colour alone. */
+
 const statusStyles: Record<string, string> = {
-  'To do': 'bg-blue-50 text-blue-600',
-  'In progress': 'bg-amber-50 text-amber-600',
-  Review: 'bg-purple-50 text-purple-600',
-  Done: 'bg-emerald-50 text-emerald-600',
-  Backlog: 'bg-slate-100 text-slate-500',
+  'To do': 'bg-zinc-100 text-zinc-600',
+  'In progress': 'bg-blue-50 text-blue-700',
+  Review: 'bg-violet-50 text-violet-700',
+  Done: 'bg-emerald-50 text-emerald-700',
+  Backlog: 'bg-zinc-100 text-zinc-500',
+}
+
+const statusDot: Record<string, string> = {
+  'To do': 'bg-zinc-400',
+  'In progress': 'bg-blue-500',
+  Review: 'bg-violet-500',
+  Done: 'bg-emerald-500',
+  Backlog: 'bg-zinc-300',
 }
 
 const priorityColors: Record<string, string> = {
-  Urgent: 'bg-red-50 text-red-600',
-  High: 'bg-orange-50 text-orange-600',
-  Medium: 'bg-yellow-50 text-yellow-600',
-  Low: 'bg-blue-50 text-blue-600',
+  Urgent: 'bg-red-50 text-red-700',
+  High: 'bg-orange-50 text-orange-700',
+  Medium: 'bg-zinc-100 text-zinc-600',
+  Low: 'bg-zinc-100 text-zinc-500',
 }
 
+/** Priority shown with a glyph so it is distinguishable without colour. */
+const priorityGlyph: Record<string, string> = {
+  Urgent: '!!',
+  High: '!',
+  Medium: '–',
+  Low: '↓',
+}
+
+function StatusPill({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ${
+        statusStyles[status] ?? 'bg-zinc-100 text-zinc-600'
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${statusDot[status] ?? 'bg-zinc-400'}`} />
+      {status}
+    </span>
+  )
+}
+
+function PriorityTag({ priority }: { priority: string }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+        priorityColors[priority] ?? 'bg-zinc-100 text-zinc-600'
+      }`}
+      title={`${priority} priority`}
+    >
+      <span aria-hidden="true" className="font-semibold">
+        {priorityGlyph[priority] ?? '–'}
+      </span>
+      {priority}
+    </span>
+  )
+}
+
+/* ---------- Design tokens (shared control styles) ----------
+   One place to tune the feel of every control. Sizes sit at 14px/13px so dense
+   views stay readable, focus states are neutral but clearly visible, and
+   corners/borders stay soft rather than heavy. */
+
+const focusRing = 'outline-none focus:border-zinc-900 focus:ring-4 focus:ring-zinc-900/10'
+
 const inputCls =
-  'w-full rounded-md border border-[#e3e8ef] bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#1f6feb] focus:ring-2 focus:ring-[#1f6feb]/15'
-const btnPrimary =
-  'flex items-center gap-1.5 rounded-md bg-[#1f6feb] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1963d8] disabled:opacity-50 disabled:cursor-not-allowed'
-const btnGhost =
-  'flex items-center gap-1.5 rounded-md border border-[#e3e8ef] bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-[#f4f6fb]'
+  `w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-500 ${focusRing}`
+
+/** Native selects, normalized: no OS chrome, custom chevron, same metrics as inputs. */
+const selectCls = `select-field ${inputCls}`
+
+/** Compact inline select for table rows and cards. */
+const selectMini =
+  `select-field rounded-md border border-zinc-200 bg-white py-1 pl-2 pr-7 text-xs text-zinc-600 transition-colors hover:border-zinc-300 ${focusRing}`
+
+const textareaCls = `${inputCls} resize-y leading-relaxed`
+
+const btnBase =
+  'inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 outline-none focus-visible:ring-4 focus-visible:ring-zinc-900/10'
+
+const btnPrimary = `${btnBase} bg-zinc-900 px-3.5 py-2 text-white hover:bg-zinc-800 active:bg-zinc-950`
+const btnGhost = `${btnBase} border border-zinc-200 bg-white px-3.5 py-2 text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900`
+const btnSubtle = `${btnBase} px-3 py-1.5 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900`
+const btnDanger = `${btnBase} border border-zinc-200 bg-white px-3.5 py-2 text-zinc-700 hover:border-red-200 hover:bg-red-50 hover:text-red-600`
+
+/** Small square icon button used in headers, rows, and cards. */
+const iconBtn =
+  'inline-flex items-center justify-center rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 outline-none focus-visible:ring-4 focus-visible:ring-zinc-900/10'
+
+/** Field label: small, medium weight, sentence case (no shouty uppercase). */
+const labelCls = 'mb-1.5 block text-xs font-medium text-zinc-500'
+
+/** Monospace-ish work item key chip. */
+const keyChip =
+  'shrink-0 rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-medium tracking-tight text-zinc-600'
 
 function SprintBoard({
   project,
@@ -497,6 +821,7 @@ function SprintBoard({
   currentUser,
   canManage,
   canEditTask,
+  subtaskFor,
   onSelect,
   onStatus,
   onAssign,
@@ -513,6 +838,7 @@ function SprintBoard({
   currentUser: TeamMember
   canManage: boolean
   canEditTask: (task: TaskWithProject) => boolean
+  subtaskFor: (taskId: string) => { done: number; total: number } | null
   onSelect: (task: TaskWithProject) => void
   onStatus: (task: TaskWithProject, status: string) => void
   onAssign: (task: TaskWithProject, sprintId: string | null, status?: string) => void
@@ -553,43 +879,44 @@ function SprintBoard({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="surface-card flex flex-wrap items-center justify-between gap-3 p-3">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#1f6feb] to-[#3b82f6] text-xs font-bold text-white shadow-sm">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 font-mono text-[11px] font-semibold text-white">
             {project.key}
           </div>
           <div>
-            <div className="text-sm font-semibold text-slate-800">{project.name}</div>
-            <div className="text-[10px] text-slate-400">
-              {teamMembers.length} members · {boardProjectTasks.length} tasks
+            <div className="text-sm font-semibold tracking-tight text-zinc-900">{project.name}</div>
+            <div className="mt-0.5 text-xs text-zinc-500">
+              {teamMembers.length} {teamMembers.length === 1 ? 'member' : 'members'} · {boardProjectTasks.length} items
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex -space-x-1">
+        <div className="flex items-center gap-3">
+          <div className="flex -space-x-1.5">
             {teamMembers.slice(0, 5).map((m) => (
               <div key={m.id} className="rounded-full ring-2 ring-white">
-                <Avatar name={m.displayName || '?'} color={m.avatarColor} size={24} />
+                <Avatar name={m.displayName || '?'} color={m.avatarColor} size={26} />
               </div>
             ))}
             {teamMembers.length > 5 && (
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-[9px] text-slate-500 ring-2 ring-white">
+              <div className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-zinc-100 text-[10px] font-medium text-zinc-600 ring-2 ring-white">
                 +{teamMembers.length - 5}
               </div>
             )}
           </div>
-          <button className={btnPrimary} onClick={onCreateSprint} disabled={!canManage}>
-            <Plus size={13} /> New sprint
+          <button className={btnGhost} onClick={onCreateSprint} disabled={!canManage}>
+            <Plus size={15} /> New sprint
           </button>
         </div>
       </div>
 
+      {/* Sprint switcher */}
       <div className="flex flex-wrap items-center gap-1.5">
         <button
           onClick={() => setSelection(null)}
-          className={`rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
-            !showSprint ? 'bg-[#1f6feb] text-white' : 'bg-white text-slate-500 border border-[#e3e8ef] hover:bg-[#f4f6fb]'
+          className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+            !showSprint ? 'bg-zinc-900 font-medium text-white' : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
           }`}
         >
           Backlog
@@ -598,60 +925,63 @@ function SprintBoard({
           <button
             key={s.id}
             onClick={() => setSelection(s.id)}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
-              selection === s.id ? 'bg-[#1f6feb] text-white' : 'bg-white text-slate-500 border border-[#e3e8ef] hover:bg-[#f4f6fb]'
+            className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors ${
+              selection === s.id
+                ? 'bg-zinc-900 font-medium text-white'
+                : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
             }`}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${sprintDot[s.status] ?? 'bg-slate-300'}`} />
+            <span className={`h-1.5 w-1.5 rounded-full ${sprintDot[s.status] ?? 'bg-zinc-400'}`} />
             {s.name}
-            <span className={`text-[9px] ${selection === s.id ? 'text-white/70' : 'text-slate-400'}`}>
-              {s.status === 'active' ? '· active' : s.status === 'completed' ? '· done' : ''}
-            </span>
+            {s.status !== 'planned' && (
+              <span className={selection === s.id ? 'text-white/60' : 'text-zinc-400'}>
+                {s.status === 'active' ? 'active' : 'done'}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-{selectedSprint && (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#e3e8ef] bg-white px-3 py-2 text-[11px] text-slate-500">
-            <Layers3 size={13} className="text-[#1f6feb]" />
-            <span className="font-medium text-slate-700">{selectedSprint.name}</span>
-            {selectedSprint.goal && <span className="truncate text-slate-400">· {selectedSprint.goal}</span>}
-            <span className="ml-auto shrink-0">
+      {selectedSprint && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3">
+          <Layers3 size={16} className="shrink-0 text-zinc-400" />
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-zinc-900">{selectedSprint.name}</span>
+            {selectedSprint.goal && <p className="truncate text-xs text-zinc-500">{selectedSprint.goal}</p>}
+          </div>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="shrink-0 text-xs text-zinc-500">
               {doneCount}/{sprintTasks.length} done
             </span>
-            <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[#e3e8ef]">
+            <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-zinc-200">
               <div
-                className="h-full rounded-full bg-[#1f6feb] transition-all"
+                className="h-full rounded-full bg-zinc-900 transition-all"
                 style={{ width: sprintTasks.length ? `${Math.round((doneCount / sprintTasks.length) * 100)}%` : '0%' }}
               />
             </div>
             {selectedSprint.status === 'planned' && (
-              <button
-                className="shrink-0 rounded-md bg-[#1f6feb] px-2.5 py-1 text-[10px] font-medium text-white hover:bg-[#1963d8]"
-                onClick={() => onStartSprint(selectedSprint)}
-              >
+              <button className={btnPrimary} onClick={() => onStartSprint(selectedSprint)}>
                 Start sprint
               </button>
             )}
             {selectedSprint.status === 'active' && (
-              <button
-                className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1 text-[10px] font-medium text-white hover:bg-emerald-700"
-                onClick={() => onCompleteSprint(selectedSprint)}
-              >
-                <Check size={12} /> End sprint
+              <button className={btnGhost} onClick={() => onCompleteSprint(selectedSprint)}>
+                <Check size={15} /> End sprint
               </button>
             )}
             {canManage && selectedSprint.status !== 'active' && (
               <button
-                className="shrink-0 text-slate-300 hover:text-red-500"
+                className={iconBtn + ' hover:bg-red-50 hover:text-red-600'}
                 onClick={() => onDeleteSprint(selectedSprint)}
                 title="Delete sprint"
+                aria-label="Delete sprint"
               >
-                <Trash2 size={13} />
+                <Trash2 size={15} />
               </button>
             )}
           </div>
-        )}
+        </div>
+      )}
 
       <div
         className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${
@@ -665,6 +995,7 @@ function SprintBoard({
             members={members}
             currentUser={currentUser}
             canManage={canEditTask}
+            subtaskFor={subtaskFor}
             onSelect={onSelect}
             onStatus={onStatus}
             onDelete={onDeleteTask}
@@ -679,6 +1010,7 @@ function SprintBoard({
             members={members}
             currentUser={currentUser}
             canManage={canEditTask}
+            subtaskFor={subtaskFor}
             onSelect={onSelect}
             onStatus={onStatus}
             onDelete={onDeleteTask}
@@ -708,22 +1040,22 @@ function EpicsView({
   onDelete: (epic: Epic) => void
 }) {
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
       {epics.map((epic) => {
         const project = projects.find((p) => p.id === epic.projectId)
         const count = tasks.filter((t) => t.epicId === epic.id).length
         const manage = canManageEpic(epic)
         return (
-          <div key={epic.id} className="flex flex-col gap-2 rounded-lg border border-[#e3e8ef] bg-white p-4">
+          <div key={epic.id} className="flex flex-col gap-2.5 rounded-xl border border-zinc-200 bg-white p-5 transition-colors hover:border-zinc-300">
             <div className="flex items-center gap-2">
               {project && (
-                <span className="rounded bg-[#eef2f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f6feb]">{project.key}</span>
+                <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-zinc-600">{project.key}</span>
               )}
-              <h3 className="truncate text-sm font-semibold text-slate-800">{epic.title}</h3>
+              <h3 className="truncate text-sm font-semibold text-zinc-900">{epic.title}</h3>
               {manage && (
                 <button
                   onClick={() => onDelete(epic)}
-                  className="ml-auto text-slate-300 hover:text-red-500"
+                  className="ml-auto text-zinc-400 hover:text-red-500"
                   title="Delete epic"
                 >
                   <Trash2 size={14} />
@@ -731,17 +1063,17 @@ function EpicsView({
               )}
             </div>
             {epic.description && (
-              <p className="line-clamp-2 text-xs leading-relaxed text-slate-500">{epic.description}</p>
+              <p className="line-clamp-2 text-sm leading-relaxed text-zinc-500">{epic.description}</p>
             )}
-            <div className="mt-auto flex items-center gap-2 border-t border-[#e3e8ef] pt-2">
-              <span className="flex items-center gap-1 text-[10px] text-slate-400">
+            <div className="mt-auto flex items-center gap-2 border-t border-zinc-200 pt-2">
+              <span className="flex items-center gap-1 text-xs text-zinc-500">
                 <ListChecks size={11} /> {count} tasks
               </span>
               {manage ? (
                 <select
                   value={epic.status}
                   onChange={(e) => onChangeStatus(epic, e.target.value)}
-                  className="ml-auto rounded border border-[#e3e8ef] bg-white px-1.5 py-1 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb]"
+                  className={`ml-auto ${selectMini}`}
                 >
                   {EPIC_STATUSES.map((s) => (
                     <option key={s} value={s}>
@@ -750,7 +1082,7 @@ function EpicsView({
                   ))}
                 </select>
               ) : (
-                <span className="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">{epic.status}</span>
+                <span className="ml-auto rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">{epic.status}</span>
               )}
             </div>
           </div>
@@ -778,31 +1110,31 @@ function ProjectsView({
   onDelete: (project: Project) => void
 }) {
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
       {projects.map((project) => {
         const team = teams.find((t) => t.id === project.teamId)
         const lead = members.find((m) => m.userId === project.leadUserId)
         const count = tasks.filter((t) => t.projectId === project.id).length
         const manage = canManageProject(project)
         return (
-          <div key={project.id} className="group flex flex-col gap-2 rounded-lg border border-[#e3e8ef] bg-white p-4">
+          <div key={project.id} className="group flex flex-col gap-2.5 rounded-xl border border-zinc-200 bg-white p-5 transition-colors hover:border-zinc-300">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#1f6feb]/10 text-[10px] font-bold text-[#1f6feb]">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 font-mono text-[11px] font-semibold text-zinc-600">
                 {project.key}
               </div>
-              <h3 className="truncate text-sm font-semibold text-slate-800">{project.name}</h3>
+              <h3 className="truncate text-sm font-semibold text-zinc-900">{project.name}</h3>
               {manage && (
                 <div className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <button
                     onClick={() => onEdit(project)}
-                    className="rounded p-1 text-slate-400 hover:bg-[#f4f6fb] hover:text-[#1f6feb]"
+                    className="rounded p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-400"
                     title="Edit project"
                   >
                     <Pencil size={13} />
                   </button>
                   <button
                     onClick={() => onDelete(project)}
-                    className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
+                    className="rounded p-1 text-zinc-500 hover:bg-red-50 hover:text-red-500"
                     title="Delete project"
                   >
                     <Trash2 size={13} />
@@ -811,9 +1143,9 @@ function ProjectsView({
               )}
             </div>
             {project.description && (
-              <p className="line-clamp-2 text-xs leading-relaxed text-slate-500">{project.description}</p>
+              <p className="line-clamp-2 text-sm leading-relaxed text-zinc-500">{project.description}</p>
             )}
-            <div className="mt-auto flex items-center gap-3 border-t border-[#e3e8ef] pt-2 text-[10px] text-slate-400">
+            <div className="mt-auto flex items-center gap-3 border-t border-zinc-200 pt-2 text-xs text-zinc-500">
               <span>{team?.name ?? 'No team'}</span>
               {lead ? (
                 <span className="flex items-center gap-1">
@@ -867,31 +1199,31 @@ function TeamsView({
         const teamUserIds = new Set(teamMembers.map((m) => m.userId))
         const available = (allUsers ?? []).filter((u) => !teamUserIds.has(u.id))
         return (
-          <div key={team.id} className="rounded-lg border border-[#e3e8ef] bg-white p-4">
+          <div key={team.id} className="rounded-xl border border-zinc-200 bg-white p-5">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-800">{team.name}</h3>
-              <span className="rounded-full bg-[#eef2f8] px-2 py-0.5 text-[10px] text-slate-500">
+              <h3 className="text-sm font-semibold text-zinc-900">{team.name}</h3>
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
                 {teamMembers.length} members
               </span>
               {teamMembers.length === 1 && teamMembers[0]?.id === currentUser.id && teamMembers[0]?.userId === currentUser.userId && teamMembers[0]?.role !== 'admin' && canCreateTeam && (
-                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-600">You are not an admin — created by lead</span>
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-600">You are not an admin — created by lead</span>
               )}
             </div>
-            {team.description && <p className="mt-1 text-xs text-slate-500">{team.description}</p>}
+            {team.description && <p className="mt-1 text-xs text-zinc-600">{team.description}</p>}
             <div className="mt-3 flex flex-col gap-1.5">
               {teamMembers.map((m) => (
-                <div key={m.id} className="flex items-center gap-2 rounded-md px-1 py-1 hover:bg-[#f4f6fb]">
+                <div key={m.id} className="flex items-center gap-2 rounded-md px-1 py-1 hover:bg-zinc-100">
                   <Avatar name={m.displayName || '?'} color={m.avatarColor} size={24} />
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-800">
                     {m.displayName}
-                    {m.userId === currentUser.userId && <span className="ml-1 text-[10px] text-slate-400">(you)</span>}
+                    {m.userId === currentUser.userId && <span className="ml-1 text-xs text-zinc-500">(you)</span>}
                   </span>
                   {admin ? (
                     <div className="flex items-center gap-1.5">
                       <select
                         value={m.role}
                         onChange={(e) => onChangeRole(m, e.target.value)}
-                        className="rounded-md border border-[#e3e8ef] bg-white px-2 py-1 text-[10px] font-medium text-slate-600 outline-none focus:border-[#1f6feb] focus:ring-2 focus:ring-[#1f6feb]/15"
+                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-900/10"
                       >
                         {['admin', 'lead', 'member'].map((r) => (
                           <option key={r} value={r}>
@@ -903,20 +1235,20 @@ function TeamsView({
                         <button
                           onClick={() => onRemoveMember(m)}
                           title={`Remove ${m.displayName} from ${team.name}`}
-                          className="flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-[10px] font-medium text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                          className="flex items-center gap-1 rounded-md border border-transparent px-2 py-1 text-xs font-medium text-zinc-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                         >
-                          <UserMinus size={12} /> Remove
+                          <UserMinus size={14} /> Remove
                         </button>
                       )}
                     </div>
                   ) : (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{m.role}</span>
+                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">{m.role}</span>
                   )}
                 </div>
               ))}
             </div>
 {admin && (
-                <div className="mt-3 border-t border-[#e7ebf3] pt-3">
+                <div className="mt-3 border-t border-zinc-200 pt-3">
                   {addFor === team.id ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <select
@@ -940,7 +1272,7 @@ function TeamsView({
                           setPickId('')
                         }}
                       >
-                        <UserPlus size={13} /> Add
+                        <UserPlus size={15} /> Add
                       </button>
                       <button
                         className={btnGhost}
@@ -968,7 +1300,7 @@ function TeamsView({
                             : ''
                       }
                     >
-                      <UserPlus size={13} /> Add member
+                      <UserPlus size={15} /> Add member
                     </button>
                   )}
                 </div>
@@ -1011,39 +1343,300 @@ function HistoryView({
         const delivered = sprintTasks.filter((t) => t.status === 'Done')
         const points = delivered.reduce((sum, t) => sum + (t.points ?? 0), 0)
         return (
-          <div key={sprint.id} className="rounded-lg border border-[#e3e8ef] bg-white p-4">
+          <div key={sprint.id} className="rounded-xl border border-zinc-200 bg-white p-5">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#1f6feb]/10 text-[10px] font-bold text-[#1f6feb]">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-100 font-mono text-[11px] font-semibold text-zinc-600">
                 {project?.key ?? '—'}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-slate-800">{sprint.name}</div>
-                <div className="text-[10px] text-slate-400">
+                <div className="text-sm font-semibold text-zinc-900">{sprint.name}</div>
+                <div className="text-xs text-zinc-500">
                   {project?.name ?? 'Unknown project'} · {formatDate(sprint.completedAt)}
                 </div>
               </div>
-              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600">
                 Ended
               </span>
             </div>
-            {sprint.goal && <p className="mt-2 text-xs text-slate-500">{sprint.goal}</p>}
-            <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-slate-500">
+            {sprint.goal && <p className="mt-2 text-xs text-zinc-600">{sprint.goal}</p>}
+            <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-zinc-600">
               <span>
                 <Check size={11} className="mr-1 inline text-emerald-500" />
-                <b className="text-slate-700">{delivered.length}</b> delivered
+                <b className="text-zinc-800">{delivered.length}</b> delivered
               </span>
               <span>
                 <Zap size={11} className="mr-1 inline text-amber-500" />
-                <b className="text-slate-700">{points}</b> pts completed
+                <b className="text-zinc-800">{points}</b> pts completed
               </span>
               <span>
-                <CircleDot size={11} className="mr-1 inline text-slate-400" />
-                <b className="text-slate-700">{sprintTasks.length - delivered.length}</b> not completed
+                <CircleDot size={11} className="mr-1 inline text-zinc-500" />
+                <b className="text-zinc-800">{sprintTasks.length - delivered.length}</b> not completed
               </span>
             </div>
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/* ---------- Dashboard ---------- */
+
+function StatCard({
+  label,
+  value,
+  icon,
+  tone = 'slate',
+}: {
+  label: string
+  value: number
+  icon: ReactNode
+  tone?: 'slate' | 'blue' | 'amber' | 'emerald' | 'red'
+}) {
+  const tones: Record<string, string> = {
+    slate: 'text-zinc-600 bg-zinc-100',
+    blue: 'text-zinc-400 bg-zinc-100',
+    amber: 'text-amber-600 bg-amber-50',
+    emerald: 'text-emerald-600 bg-emerald-50',
+    red: 'text-red-600 bg-red-50',
+  }
+  return (
+    <div className="flex items-center gap-3.5 rounded-xl border border-zinc-200 bg-white p-4 transition-colors hover:border-zinc-300">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${tones[tone]}`}>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-2xl font-semibold leading-none tracking-tight text-zinc-900">{value}</div>
+        <div className="mt-1.5 truncate text-xs text-zinc-500">{label}</div>
+      </div>
+    </div>
+  )
+}
+
+function DashboardView({
+  tasks,
+  members,
+  sprints,
+  currentUser,
+  onSelect,
+}: {
+  tasks: TaskWithProject[]
+  members: TeamMember[]
+  sprints: Sprint[]
+  currentUser: TeamMember
+  onSelect: (task: TaskWithProject) => void
+}) {
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+
+  const isDone = (t: TaskWithProject) => t.status === 'Done'
+  const mine = tasks.filter((t) => t.assigneeId === currentUser.userId)
+  const myOpen = mine.filter((t) => !isDone(t))
+  const myInProgress = mine.filter((t) => t.status === 'In progress')
+  const myDone = mine.filter(isDone)
+
+  const overdue = tasks
+    .filter((t) => !isDone(t) && t.dueDate && new Date(t.dueDate) < startOfToday)
+    .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())
+
+  const upcoming = tasks
+    .filter((t) => !isDone(t) && t.dueDate && new Date(t.dueDate) >= startOfToday)
+    .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())
+    .slice(0, 6)
+
+  const highPriority = tasks
+    .filter((t) => !isDone(t) && (t.priority === 'Urgent' || t.priority === 'High'))
+    .sort((a, b) => (a.priority === 'Urgent' ? -1 : 1) - (b.priority === 'Urgent' ? -1 : 1))
+    .slice(0, 6)
+
+  const openBugs = tasks.filter((t) => t.type === 'Bug' && !isDone(t)).length
+
+  const recentlyCompleted = tasks
+    .filter(isDone)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, 6)
+
+  const statusCounts = TASK_STATUSES.map((status) => ({
+    status,
+    count: tasks.filter((t) => t.status === status).length,
+  }))
+
+  const activeSprints = sprints.filter((s) => s.status === 'active')
+
+  // Team workload: open (not done) tasks assigned per person, deduped by user.
+  const uniqueMembers = members.filter((m, i, arr) => arr.findIndex((x) => x.userId === m.userId) === i && m.displayName)
+  const workload = uniqueMembers
+    .map((m) => ({ member: m, count: tasks.filter((t) => t.assigneeId === m.userId && !isDone(t)).length }))
+    .sort((a, b) => b.count - a.count)
+  const maxLoad = Math.max(1, ...workload.map((w) => w.count))
+
+  // Velocity: story points delivered per completed sprint (most recent first).
+  const velocity = sprints
+    .filter((s) => s.status === 'completed')
+    .sort((a, b) => (a.completedAt ? new Date(a.completedAt).getTime() : 0) - (b.completedAt ? new Date(b.completedAt).getTime() : 0))
+    .slice(-6)
+    .map((s) => ({
+      sprint: s,
+      points: tasks.filter((t) => t.sprintId === s.id && isDone(t)).reduce((sum, t) => sum + (t.points ?? 0), 0),
+    }))
+  const maxVelocity = Math.max(1, ...velocity.map((v) => v.points))
+
+  const MiniRow = ({ task }: { task: TaskWithProject }) => (
+    <button
+      onClick={() => onSelect(task)}
+      className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-zinc-50"
+    >
+      <span className={keyChip}>{task.key}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-zinc-700">{task.title}</span>
+      {task.priority !== 'Medium' && <PriorityTag priority={task.priority} />}
+      {task.dueDate && <span className="shrink-0 text-xs text-zinc-400">{formatDate(task.dueDate)}</span>}
+    </button>
+  )
+
+  const Panel = ({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) => (
+    <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-5">
+      <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+        {icon} {title}
+      </div>
+      {children}
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Metric cards */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Assigned to me (open)" value={myOpen.length} icon={<ListChecks size={16} />} tone="blue" />
+        <StatCard label="My in progress" value={myInProgress.length} icon={<CircleDot size={16} />} tone="amber" />
+        <StatCard label="Completed by me" value={myDone.length} icon={<Check size={16} />} tone="emerald" />
+        <StatCard label="Overdue (team)" value={overdue.length} icon={<AlertTriangle size={16} />} tone="red" />
+      </div>
+
+      {/* Active sprint + status breakdown */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <Panel title="Active sprints" icon={<Layers3 size={13} className="text-zinc-400" />}>
+          {activeSprints.length === 0 ? (
+            <p className="text-xs text-zinc-400">No active sprints right now.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {activeSprints.map((s) => {
+                const st = tasks.filter((t) => t.sprintId === s.id)
+                const doneCount = st.filter(isDone).length
+                const pct = st.length ? Math.round((doneCount / st.length) * 100) : 0
+                return (
+                  <div key={s.id}>
+                    <div className="mb-1 flex items-center justify-between text-xs">
+                      <span className="font-medium text-zinc-800">{s.name}</span>
+                      <span className="text-zinc-500">
+                        {doneCount}/{st.length} · {pct}%
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-zinc-200">
+                      <div className="h-full rounded-full bg-zinc-900 transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    {s.goal && <p className="mt-1 truncate text-xs text-zinc-500">{s.goal}</p>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Status breakdown" icon={<FolderKanban size={13} className="text-zinc-400" />}>
+          <div className="grid grid-cols-2 gap-2">
+            {statusCounts.map(({ status, count }) => (
+              <div key={status} className="flex items-center justify-between rounded-md bg-zinc-50 px-2.5 py-2">
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[status] ?? 'bg-zinc-100 text-zinc-600'}`}>
+                  {status}
+                </span>
+                <span className="text-sm font-bold text-zinc-800">{count}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+            <AlertCircle size={11} /> {openBugs} open bug{openBugs === 1 ? '' : 's'}
+          </div>
+        </Panel>
+      </div>
+
+      {/* Workload + velocity */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <Panel title="Team workload (open tasks)" icon={<Users size={13} className="text-zinc-400" />}>
+          {workload.length === 0 ? (
+            <p className="text-xs text-zinc-400">No members yet.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {workload.map(({ member, count }) => (
+                <div key={member.userId} className="flex items-center gap-2">
+                  <Avatar name={member.displayName || '?'} color={member.avatarColor} size={20} />
+                  <span className="w-24 shrink-0 truncate text-xs text-zinc-700">{member.displayName}</span>
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-200">
+                    <div className="h-full rounded-full bg-zinc-900" style={{ width: `${(count / maxLoad) * 100}%` }} />
+                  </div>
+                  <span className="w-6 shrink-0 text-right text-xs font-medium text-zinc-600">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Velocity (points delivered)" icon={<TrendingUp size={13} className="text-zinc-400" />}>
+          {velocity.length === 0 ? (
+            <p className="text-xs text-zinc-400">Complete a sprint to see velocity.</p>
+          ) : (
+            <div className="flex h-40 items-end gap-2">
+              {velocity.map(({ sprint, points }) => (
+                <div key={sprint.id} className="flex flex-1 flex-col items-center gap-1">
+                  <span className="text-xs font-medium text-zinc-600">{points}</span>
+                  <div className="flex w-full flex-1 items-end">
+                    <div
+                      className="w-full rounded-t bg-zinc-900/85"
+                      style={{ height: `${Math.max(4, (points / maxVelocity) * 100)}%` }}
+                      title={`${sprint.name}: ${points} pts`}
+                    />
+                  </div>
+                  <span className="w-full truncate text-center text-xs text-zinc-500" title={sprint.name}>
+                    {sprint.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      {/* Lists */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <Panel title="High priority" icon={<Zap size={13} className="text-orange-500" />}>
+          {highPriority.length === 0 ? (
+            <p className="text-xs text-zinc-400">Nothing high priority open.</p>
+          ) : (
+            highPriority.map((t) => <MiniRow key={t.id} task={t} />)
+          )}
+        </Panel>
+        <Panel title="Upcoming deadlines" icon={<CalendarDays size={13} className="text-zinc-400" />}>
+          {upcoming.length === 0 ? (
+            <p className="text-xs text-zinc-400">No upcoming due dates.</p>
+          ) : (
+            upcoming.map((t) => <MiniRow key={t.id} task={t} />)
+          )}
+        </Panel>
+        <Panel title="Recently completed" icon={<Check size={13} className="text-emerald-500" />}>
+          {recentlyCompleted.length === 0 ? (
+            <p className="text-xs text-zinc-400">Nothing completed yet.</p>
+          ) : (
+            recentlyCompleted.map((t) => <MiniRow key={t.id} task={t} />)
+          )}
+        </Panel>
+      </div>
+
+      {overdue.length > 0 && (
+        <Panel title={`Overdue (${overdue.length})`} icon={<AlertTriangle size={13} className="text-red-500" />}>
+          <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {overdue.slice(0, 8).map((t) => (
+              <MiniRow key={t.id} task={t} />
+            ))}
+          </div>
+        </Panel>
+      )}
     </div>
   )
 }
@@ -1057,6 +1650,7 @@ function CreateDialog({
   epics,
   sprints,
   currentUser,
+  labelSuggestions,
   pending,
   onClose,
   onCreate,
@@ -1067,6 +1661,7 @@ function CreateDialog({
   epics: Epic[]
   sprints: Sprint[]
   currentUser: TeamMember
+  labelSuggestions: string[]
   pending: boolean
   onClose: () => void
   onCreate: (input: Parameters<typeof createTask>[0]) => void
@@ -1082,6 +1677,7 @@ function CreateDialog({
   const [assigneeId, setAssigneeId] = useState(currentUser.userId)
   const [epicId, setEpicId] = useState('')
   const [sprintId, setSprintId] = useState('')
+  const [labels, setLabels] = useState<string[]>([])
 
   const selectedProject = projects.find((p) => p.id === project)
   const teamMembers = selectedProject ? members.filter((m) => m.teamId === selectedProject.teamId) : []
@@ -1090,17 +1686,21 @@ function CreateDialog({
 
   if (projects.length === 0) {
     return (
-      <Dialog title="Create task" onClose={onClose}>
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <FolderOpen size={28} className="text-slate-300" />
-          <p className="text-xs leading-relaxed text-slate-500">
-            You need at least one project before creating tasks. Create a project first, then come back here.
-          </p>
+      <Drawer
+        title="Create work item"
+        onClose={onClose}
+        footer={
           <button className={btnGhost} onClick={onClose}>
             Close
           </button>
-        </div>
-      </Dialog>
+        }
+      >
+        <Empty
+          icon={<FolderOpen size={22} />}
+          title="No project yet"
+          hint="Work items live inside a project. Create your first project, then come back here."
+        />
+      </Drawer>
     )
   }
 
@@ -1118,122 +1718,162 @@ function CreateDialog({
       assigneeId: assigneeId || undefined,
       epicId: epicId || undefined,
       sprintId: sprintId || undefined,
+      labels,
     })
   }
 
+  // Cmd/Ctrl+Enter submits from anywhere in the form, including the description.
+  const hotkeySubmit = (e: ReactKeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault()
+      submit()
+    }
+  }
+
   return (
-    <Dialog title="Create task" onClose={onClose}>
-      <div className="flex flex-col gap-3">
-        <Field label="Project">
-          <select value={project} onChange={(e) => setProject(e.target.value)} className={inputCls}>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.key})
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Title">
-          <input
-            autoFocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
-            placeholder="e.g. Fix login redirect"
-            className={inputCls}
-          />
-        </Field>
-        <Field label="Description">
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            placeholder="What needs to be done?"
-            className={inputCls + ' resize-none'}
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Type">
-            <select value={type} onChange={(e) => setType(e.target.value)} className={inputCls}>
-              {TASK_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Priority">
-            <select value={priority} onChange={(e) => setPriority(e.target.value)} className={inputCls}>
-              {TASK_PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Area">
-            <select value={area} onChange={(e) => setArea(e.target.value)} className={inputCls}>
-              {AREAS.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Points">
-            <select value={points} onChange={(e) => setPoints(e.target.value)} className={inputCls}>
-              {POINTS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Assignee">
-            <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className={inputCls}>
-              {teamMembers.map((m) => (
-                <option key={m.id} value={m.userId}>
-                  {m.displayName}
-                  {m.userId === currentUser.userId ? ' (you)' : ''}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Due date">
-            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputCls} />
-          </Field>
-          <Field label="Epic">
-            <select value={epicId} onChange={(e) => setEpicId(e.target.value)} className={inputCls}>
-              <option value="">No epic</option>
-              {projectEpics.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.title}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Sprint">
-            <select value={sprintId} onChange={(e) => setSprintId(e.target.value)} className={inputCls}>
-              <option value="">Backlog</option>
-              {projectSprints.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
+    <Drawer
+      title="Create work item"
+      description="Give it a clear title and enough context for someone else to pick up."
+      onClose={onClose}
+      width="lg"
+      footer={
+        <>
+          <span className="mr-auto hidden text-xs text-zinc-400 sm:block">
+            <kbd className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-sans text-[11px] text-zinc-500">
+              ⌘
+            </kbd>
+            <span className="mx-1">+</span>
+            <kbd className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-sans text-[11px] text-zinc-500">
+              ↵
+            </kbd>
+            <span className="ml-1.5">to create</span>
+          </span>
           <button className={btnGhost} onClick={onClose} disabled={pending}>
             Cancel
           </button>
           <button className={btnPrimary} onClick={submit} disabled={pending || !title.trim()}>
-            {pending ? <CircleDot className="animate-spin" size={13} /> : <Plus size={13} />}
-            {pending ? 'Creating…' : 'Create task'}
+            {pending ? <CircleDot className="animate-spin" size={15} /> : <Plus size={15} />}
+            {pending ? 'Creating…' : 'Create work item'}
           </button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-6" onKeyDown={hotkeySubmit}>
+        {/* Primary content: the part people actually write */}
+        <div className="flex flex-col gap-4">
+          <Field label="Title">
+            <input
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Fix login redirect on expired session"
+              className={`${inputCls} text-base`}
+            />
+          </Field>
+
+          <Field label="Description" hint="Markdown is supported. Drag the bottom edge to make this taller.">
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={12}
+              placeholder={
+                'What needs to happen and why?\n\n## Context\n\n## Acceptance criteria\n- [ ] …'
+              }
+              className={`${textareaCls} min-h-[260px]`}
+            />
+          </Field>
+        </div>
+
+        {/* Secondary metadata, visually separated so it never competes with the writing area */}
+        <div className="border-t border-zinc-200 pt-5">
+          <h4 className="mb-3 text-xs font-medium text-zinc-500">Details</h4>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Project">
+              <select value={project} onChange={(e) => setProject(e.target.value)} className={selectCls}>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.key})
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Type">
+              <select value={type} onChange={(e) => setType(e.target.value)} className={selectCls}>
+                {TASK_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Assignee">
+              <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className={selectCls}>
+                <option value="">Unassigned</option>
+                {teamMembers.map((m) => (
+                  <option key={m.id} value={m.userId}>
+                    {m.displayName}
+                    {m.userId === currentUser.userId ? ' (you)' : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Priority">
+              <select value={priority} onChange={(e) => setPriority(e.target.value)} className={selectCls}>
+                {TASK_PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Due date">
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Story points">
+              <select value={points} onChange={(e) => setPoints(e.target.value)} className={selectCls}>
+                {POINTS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Epic">
+              <select value={epicId} onChange={(e) => setEpicId(e.target.value)} className={selectCls}>
+                <option value="">No epic</option>
+                {projectEpics.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Sprint">
+              <select value={sprintId} onChange={(e) => setSprintId(e.target.value)} className={selectCls}>
+                <option value="">Backlog</option>
+                {projectSprints.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Area">
+              <select value={area} onChange={(e) => setArea(e.target.value)} className={selectCls}>
+                {AREAS.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Labels" className="sm:col-span-2">
+              <LabelEditor value={labels} suggestions={labelSuggestions} onChange={setLabels} />
+            </Field>
+          </div>
         </div>
       </div>
-    </Dialog>
+    </Drawer>
   )
 }
 
@@ -1265,11 +1905,23 @@ function SprintDialog({
   }
 
   return (
-    <Dialog title="New sprint" onClose={onClose}>
-      <div className="flex flex-col gap-3">
-        <p className="rounded-md bg-[#f4f6fb] px-3 py-2 text-[10px] text-slate-400">
-          Creating sprint for <span className="font-medium text-slate-600">{project.name} ({project.key})</span>
-        </p>
+    <Dialog
+      title="New sprint"
+      description={`For ${project.name} (${project.key})`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className={btnGhost} onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button className={btnPrimary} onClick={submit} disabled={pending || !name.trim()}>
+            {pending ? <CircleDot className="animate-spin" size={15} /> : <Plus size={15} />}
+            {pending ? 'Creating…' : 'Create sprint'}
+          </button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
         <Field label="Sprint name">
           <input
             autoFocus
@@ -1280,25 +1932,22 @@ function SprintDialog({
             className={inputCls}
           />
         </Field>
-        <Field label="Goal">
-          <input value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="What will this sprint deliver?" className={inputCls} />
+        <Field label="Goal" hint="Optional. What should this sprint deliver?">
+          <textarea
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            rows={3}
+            placeholder="e.g. Ship MFA enrollment and prepare for security review"
+            className={textareaCls}
+          />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Starts">
             <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} className={inputCls} />
           </Field>
           <Field label="Ends">
             <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} className={inputCls} />
           </Field>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
-          <button className={btnGhost} onClick={onClose} disabled={pending}>
-            Cancel
-          </button>
-          <button className={btnPrimary} onClick={submit} disabled={pending || !name.trim()}>
-            {pending ? <CircleDot className="animate-spin" size={13} /> : <Plus size={13} />}
-            {pending ? 'Creating…' : 'Create sprint'}
-          </button>
         </div>
       </div>
     </Dialog>
@@ -1322,14 +1971,20 @@ function EpicDialog({
 
   if (projects.length === 0) {
     return (
-      <Dialog title="Create epic" onClose={onClose}>
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <FolderOpen size={28} className="text-slate-300" />
-          <p className="text-xs leading-relaxed text-slate-500">You need at least one project before creating epics.</p>
+      <Dialog
+        title="Create epic"
+        onClose={onClose}
+        footer={
           <button className={btnGhost} onClick={onClose}>
             Close
           </button>
-        </div>
+        }
+      >
+        <Empty
+          icon={<FolderOpen size={22} />}
+          title="No project yet"
+          hint="Epics group work inside a project. Create a project first."
+        />
       </Dialog>
     )
   }
@@ -1340,10 +1995,34 @@ function EpicDialog({
   }
 
   return (
-    <Dialog title="Create epic" onClose={onClose}>
-      <div className="flex flex-col gap-3">
+    <Dialog
+      title="Create epic"
+      description="A larger objective that groups related work items."
+      onClose={onClose}
+      footer={
+        <>
+          <button className={btnGhost} onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button className={btnPrimary} onClick={submit} disabled={pending || !title.trim()}>
+            {pending ? <CircleDot className="animate-spin" size={15} /> : <Plus size={15} />}
+            {pending ? 'Creating…' : 'Create epic'}
+          </button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <Field label="Title">
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Authentication modernization"
+            className={`${inputCls} text-base`}
+          />
+        </Field>
         <Field label="Project">
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
+          <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={selectCls}>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} ({p.key})
@@ -1351,34 +2030,15 @@ function EpicDialog({
             ))}
           </select>
         </Field>
-        <Field label="Title">
-          <input
-            autoFocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
-            placeholder="e.g. Payments overhaul"
-            className={inputCls}
-          />
-        </Field>
         <Field label="Description">
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            placeholder="What does this epic cover?"
-            className={inputCls + ' resize-none'}
+            rows={6}
+            placeholder="What does this epic cover, and when is it done?"
+            className={`${textareaCls} min-h-[140px]`}
           />
         </Field>
-        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
-          <button className={btnGhost} onClick={onClose} disabled={pending}>
-            Cancel
-          </button>
-          <button className={btnPrimary} onClick={submit} disabled={pending || !title.trim()}>
-            {pending ? <CircleDot className="animate-spin" size={13} /> : <Plus size={13} />}
-            {pending ? 'Creating…' : 'Create epic'}
-          </button>
-        </div>
       </div>
     </Dialog>
   )
@@ -1422,28 +2082,54 @@ function ProjectDialog({
   }
 
   return (
-    <Dialog title={isEdit ? 'Edit project' : 'Create project'} onClose={onClose}>
-      <div className="flex flex-col gap-3">
+    <Dialog
+      title={isEdit ? 'Edit project' : 'Create project'}
+      description={isEdit ? undefined : 'A product, system, or initiative that work belongs to.'}
+      onClose={onClose}
+      footer={
+        <>
+          <button className={btnGhost} onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button className={btnPrimary} onClick={submit} disabled={pending || !name.trim()}>
+            {pending ? <CircleDot className="animate-spin" size={15} /> : <Check size={15} />}
+            {pending ? 'Saving…' : isEdit ? 'Save changes' : 'Create project'}
+          </button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
         <Field label="Name">
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Web Platform" className={inputCls} />
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Security Platform"
+            className={`${inputCls} text-base`}
+          />
         </Field>
         <Field label="Description">
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            rows={2}
+            rows={5}
             placeholder="What is this project about?"
-            className={inputCls + ' resize-none'}
+            className={`${textareaCls} min-h-[120px]`}
           />
         </Field>
         {isEdit ? (
-          <Field label="Key">
-            <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="e.g. WEB" className={inputCls + ' uppercase'} />
+          <Field label="Key" hint="Used as the prefix for work item IDs, e.g. SEC-101.">
+            <input
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder="e.g. SEC"
+              className={`${inputCls} font-mono uppercase`}
+            />
           </Field>
         ) : (
-          <Field label="Team">
-            <select value={teamId} onChange={(e) => setTeamId(e.target.value)} className={inputCls}>
-              <option value="">Teams you manage or lead</option>
+          <Field label="Team" hint="Only teams you lead or administer are listed.">
+            <select value={teamId} onChange={(e) => setTeamId(e.target.value)} className={selectCls}>
+              <option value="">Select a team…</option>
               {manageTeams.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -1452,15 +2138,6 @@ function ProjectDialog({
             </select>
           </Field>
         )}
-        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
-          <button className={btnGhost} onClick={onClose} disabled={pending}>
-            Cancel
-          </button>
-          <button className={btnPrimary} onClick={submit} disabled={pending || !name.trim()}>
-            {pending ? <CircleDot className="animate-spin" size={13} /> : <Check size={13} />}
-            {pending ? 'Saving…' : isEdit ? 'Save changes' : 'Create project'}
-          </button>
-        </div>
       </div>
     </Dialog>
   )
@@ -1484,38 +2161,150 @@ function TeamDialog({
   }
 
   return (
-    <Dialog title="Create team" onClose={onClose}>
-      <div className="flex flex-col gap-3">
+    <Dialog
+      title="Create team"
+      description="A group of people who work together. You'll be its first admin."
+      onClose={onClose}
+      footer={
+        <>
+          <button className={btnGhost} onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button className={btnPrimary} onClick={submit} disabled={pending || !name.trim()}>
+            {pending ? <CircleDot className="animate-spin" size={15} /> : <Plus size={15} />}
+            {pending ? 'Creating…' : 'Create team'}
+          </button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
         <Field label="Team name">
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submit()}
-            placeholder="e.g. Platform Engineering"
-            className={inputCls}
+            placeholder="e.g. Security"
+            className={`${inputCls} text-base`}
           />
         </Field>
         <Field label="Description">
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            rows={2}
+            rows={5}
             placeholder="What does this team own?"
-            className={inputCls + ' resize-none'}
+            className={`${textareaCls} min-h-[120px]`}
           />
         </Field>
-        <div className="flex justify-end gap-2 border-t border-[#e3e8ef] pt-3">
-          <button className={btnGhost} onClick={onClose} disabled={pending}>
-            Cancel
-          </button>
-          <button className={btnPrimary} onClick={submit} disabled={pending || !name.trim()}>
-            {pending ? <CircleDot className="animate-spin" size={13} /> : <Plus size={13} />}
-            {pending ? 'Creating…' : 'Create team'}
-          </button>
-        </div>
       </div>
     </Dialog>
+  )
+}
+
+function SubtasksSection({
+  subtasks,
+  members,
+  canEdit,
+  value,
+  onChange,
+  onAdd,
+  onToggle,
+  onDelete,
+}: {
+  subtasks: TaskWithProject[]
+  members: TeamMember[]
+  canEdit: boolean
+  value: string
+  onChange: (value: string) => void
+  onAdd: () => void
+  onToggle: (sub: TaskWithProject, done: boolean) => void
+  onDelete: (sub: TaskWithProject) => void
+}) {
+  const total = subtasks.length
+  const done = subtasks.filter((s) => s.status === 'Done').length
+  const pct = total ? Math.round((done / total) * 100) : 0
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-600">
+          <GitBranch size={13} /> Subtasks
+        </span>
+        {total > 0 && (
+          <>
+            <span className="rounded-full bg-zinc-100 px-1.5 py-px text-xs text-zinc-600">
+              {done}/{total}
+            </span>
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-200">
+              <div className="h-full rounded-full bg-zinc-900 transition-all" style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-xs text-zinc-500">{pct}%</span>
+          </>
+        )}
+      </div>
+
+      {total > 0 && (
+        <div className="flex flex-col gap-1">
+          {subtasks.map((sub) => {
+            const assignee = members.find((m) => m.userId === sub.assigneeId)
+            const isDone = sub.status === 'Done'
+            return (
+              <div
+                key={sub.id}
+                className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-2 py-1.5"
+              >
+                <input
+                  type="checkbox"
+                  checked={isDone}
+                  disabled={!canEdit}
+                  onChange={(e) => onToggle(sub, e.target.checked)}
+                  className="h-3.5 w-3.5 shrink-0 accent-zinc-900"
+                  title={isDone ? 'Mark not done' : 'Mark done'}
+                />
+                <span className="shrink-0 rounded bg-zinc-100 px-1 py-px text-xs font-bold text-zinc-400">
+                  {sub.key}
+                </span>
+                <span className={`min-w-0 flex-1 truncate text-xs ${isDone ? 'text-zinc-500 line-through' : 'text-zinc-800'}`}>
+                  {sub.title}
+                </span>
+                {assignee && <Avatar name={assignee.displayName || '?'} color={assignee.avatarColor} size={18} />}
+                {canEdit && (
+                  <button
+                    onClick={() => onDelete(sub)}
+                    className="shrink-0 text-zinc-400 hover:text-red-500"
+                    title="Delete subtask"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {canEdit && (
+        <div className="flex gap-2">
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onAdd()}
+            placeholder="Add a subtask…"
+            className={inputCls}
+          />
+          <button
+            className="shrink-0 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50"
+            onClick={onAdd}
+            disabled={!value.trim()}
+          >
+            <Plus size={13} />
+          </button>
+        </div>
+      )}
+
+      {total === 0 && !canEdit && <p className="text-xs text-zinc-400">No subtasks.</p>}
+    </div>
   )
 }
 
@@ -1527,10 +2316,15 @@ function TaskDialog({
   sprints,
   currentUser,
   canEdit,
+  labelSuggestions,
+  subtasks,
   pending,
   onClose,
   onDelete,
   onUpdate,
+  onAddSubtask,
+  onToggleSubtask,
+  onDeleteSubtask,
 }: {
   task: TaskWithProject
   project: Project
@@ -1539,11 +2333,17 @@ function TaskDialog({
   sprints: Sprint[]
   currentUser: TeamMember
   canEdit: boolean
+  labelSuggestions: string[]
+  subtasks: TaskWithProject[]
   pending: boolean
   onClose: () => void
   onDelete: (task: TaskWithProject) => void
   onUpdate: (patch: Parameters<typeof updateTask>[1]) => void
+  onAddSubtask: (title: string) => void
+  onToggleSubtask: (sub: TaskWithProject, done: boolean) => void
+  onDeleteSubtask: (sub: TaskWithProject) => void
 }) {
+  const isSubtask = task.parentId !== null
   const teamMembers = members.filter((m) => m.teamId === project.teamId)
   const assignee = members.find((m) => m.userId === task.assigneeId)
   const reporter = members.find((m) => m.userId === task.reporterId)
@@ -1560,8 +2360,10 @@ function TaskDialog({
   const [epicId, setEpicId] = useState(task.epicId ?? '')
   const [sprintId, setSprintId] = useState(task.sprintId ?? '')
   const [blocked, setBlocked] = useState(task.blocked)
+  const [labels, setLabels] = useState<string[]>(() => parseLabels(task.labels))
   const [description, setDescription] = useState(task.description)
   const [editingDescription, setEditingDescription] = useState(false)
+  const [newSubtask, setNewSubtask] = useState('')
   const [dialError, setDialError] = useState('')
 
   const [showComments, setShowComments] = useState(false)
@@ -1602,45 +2404,69 @@ function TaskDialog({
   }
 
   return (
-    <Dialog title="Task details" onClose={onClose} fullScreen>
-      <div className="flex flex-col gap-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="rounded bg-[#eef2f8] px-1.5 py-0.5 text-[10px] font-bold text-[#1f6feb]">{task.key}</span>
-              <span className="text-[10px] text-slate-400">
-                {project.key} · {project.name}
+    <Drawer
+      title={isSubtask ? 'Subtask' : 'Work item'}
+      onClose={onClose}
+      width="xl"
+      footer={
+        <>
+          <span className="mr-auto text-xs text-zinc-400">
+            {pending ? (
+              <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                <CircleDot className="animate-spin" size={12} /> Saving…
               </span>
-              {task.blocked && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-600">Blocked</span>}
-            </div>
-            <h3 className="mt-1 text-base font-semibold text-slate-800">{task.title}</h3>
-            <div className="mt-1 flex items-center gap-3 text-[10px] text-slate-400">
-              <span>
-                Reporter: {reporter?.displayName ?? '—'}
-              </span>
-              <span>
-                Assignee: {assignee?.displayName ?? 'Unassigned'}
-              </span>
-              <span>Created {formatDate(task.createdAt)}</span>
-            </div>
-          </div>
+            ) : (
+              <>Updated {formatDate(task.updatedAt)}</>
+            )}
+          </span>
           {canEdit && (
-            <button
-              onClick={() => onDelete(task)}
-              className="shrink-0 rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-red-50 hover:text-red-500"
-            >
-              <Trash2 size={14} />
+            <button onClick={() => onDelete(task)} className={btnDanger}>
+              <Trash2 size={15} /> Delete
             </button>
           )}
+          <button className={btnGhost} onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-6">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={keyChip}>{task.key}</span>
+            <span className="text-xs text-zinc-500">
+              {project.key} · {project.name}
+            </span>
+            {task.blocked && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
+                <AlertTriangle size={11} /> Blocked
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 text-xl font-semibold leading-snug tracking-tight text-zinc-900">{task.title}</h3>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+            <span className="inline-flex items-center gap-1.5">
+              {assignee ? (
+                <>
+                  <Avatar name={assignee.displayName || '?'} color={assignee.avatarColor} size={18} />
+                  {assignee.displayName}
+                </>
+              ) : (
+                'Unassigned'
+              )}
+            </span>
+            <span>Reported by {reporter?.displayName ?? '—'}</span>
+            <span>Created {formatDate(task.createdAt)}</span>
+          </div>
         </div>
 
         {dialError && (
-          <div className="flex items-center gap-2 rounded-md bg-red-50 px-3 py-2 text-[11px] text-red-600">
-            <AlertCircle size={12} /> {dialError}
+          <div className="flex items-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-600">
+            <AlertCircle size={14} /> {dialError}
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 sm:grid-cols-4">
           <Field label="Status">
             <select
               value={status}
@@ -1648,7 +2474,7 @@ function TaskDialog({
                 setStatus(e.target.value)
                 onUpdate({ status: e.target.value })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               {TASK_STATUSES.map((s) => (
@@ -1665,7 +2491,7 @@ function TaskDialog({
                 setType(e.target.value)
                 onUpdate({ type: e.target.value })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               {TASK_TYPES.map((t) => (
@@ -1682,7 +2508,7 @@ function TaskDialog({
                 setPriority(e.target.value)
                 onUpdate({ priority: e.target.value })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               {TASK_PRIORITIES.map((p) => (
@@ -1699,7 +2525,7 @@ function TaskDialog({
                 setPoints(e.target.value)
                 onUpdate({ points: Number(e.target.value) })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               {POINTS.map((p) => (
@@ -1716,7 +2542,7 @@ function TaskDialog({
                 setArea(e.target.value)
                 onUpdate({ area: e.target.value })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               {AREAS.map((a) => (
@@ -1733,7 +2559,7 @@ function TaskDialog({
                 setAssigneeId(e.target.value)
                 onUpdate({ assigneeId: e.target.value || null })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               <option value="">Unassigned</option>
@@ -1752,7 +2578,7 @@ function TaskDialog({
                 setEpicId(e.target.value)
                 onUpdate({ epicId: e.target.value || null })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               <option value="">No epic</option>
@@ -1770,7 +2596,7 @@ function TaskDialog({
                 setSprintId(e.target.value)
                 onUpdate({ sprintId: e.target.value || null })
               }}
-              className={inputCls}
+              className={selectCls}
               disabled={!canEdit}
             >
               <option value="">Backlog</option>
@@ -1794,7 +2620,7 @@ function TaskDialog({
             />
           </Field>
           <div className="flex items-end">
-            <label className="flex cursor-pointer items-center gap-2 pb-1.5 text-xs text-slate-600">
+            <label className="flex cursor-pointer items-center gap-2 pb-1.5 text-xs text-zinc-700">
               <input
                 type="checkbox"
                 checked={blocked}
@@ -1803,7 +2629,7 @@ function TaskDialog({
                   setBlocked(e.target.checked)
                   onUpdate({ blocked: e.target.checked })
                 }}
-                className="h-3.5 w-3.5 accent-[#1f6feb]"
+                className="h-3.5 w-3.5 accent-zinc-900"
               />
               Blocked
             </label>
@@ -1812,9 +2638,9 @@ function TaskDialog({
 
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Description</span>
+            <span className="text-xs font-medium text-zinc-500">Description</span>
             {canEdit && !editingDescription && (
-              <button className="flex items-center gap-1 text-[10px] text-[#1f6feb] hover:underline" onClick={() => setEditingDescription(true)}>
+              <button className="flex items-center gap-1 text-xs text-zinc-400 hover:underline" onClick={() => setEditingDescription(true)}>
                 <Pencil size={10} /> Edit
               </button>
             )}
@@ -1824,66 +2650,138 @@ function TaskDialog({
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                rows={3}
+                rows={14}
                 autoFocus
-                className={inputCls + ' resize-none'}
+                placeholder={'What needs to happen and why?\n\n## Context\n\n## Acceptance criteria\n- [ ] …'}
+                className={`${textareaCls} min-h-[300px]`}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    e.preventDefault()
+                    saveDescription()
+                  }
+                }}
               />
-              <div className="flex justify-end gap-2">
-                <button className="rounded-md px-2 py-1 text-[10px] text-slate-400 hover:bg-[#f4f6fb]" onClick={() => {
-                  setDescription(task.description)
-                  setEditingDescription(false)
-                }}>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className={btnSubtle}
+                  onClick={() => {
+                    setDescription(task.description)
+                    setEditingDescription(false)
+                  }}
+                >
                   Cancel
                 </button>
-                <button className="rounded-md bg-[#1f6feb] px-2 py-1 text-[10px] font-medium text-white hover:bg-[#1963d8]" onClick={saveDescription}>
-                  Save
+                <button className={btnPrimary} onClick={saveDescription}>
+                  <Check size={15} /> Save description
                 </button>
               </div>
             </div>
           ) : description ? (
-            <p className="whitespace-pre-wrap rounded-md bg-[#f4f6fb] px-3 py-2 text-xs leading-relaxed text-slate-600">
+            <button
+              onClick={() => canEdit && setEditingDescription(true)}
+              disabled={!canEdit}
+              className={`block w-full whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white px-4 py-3.5 text-left text-sm leading-relaxed text-zinc-700 ${
+                canEdit ? 'transition-colors hover:border-zinc-300 hover:bg-zinc-50' : 'cursor-default'
+              }`}
+            >
               {description}
-            </p>
+            </button>
           ) : (
-            <p className="rounded-md bg-[#f4f6fb] px-3 py-2 text-xs text-slate-300">No description.</p>
+            <button
+              onClick={() => canEdit && setEditingDescription(true)}
+              disabled={!canEdit}
+              className={`block w-full rounded-xl border border-dashed border-zinc-200 px-4 py-6 text-left text-sm text-zinc-400 ${
+                canEdit ? 'transition-colors hover:border-zinc-300 hover:bg-zinc-50' : 'cursor-default'
+              }`}
+            >
+              {canEdit ? 'Add a description…' : 'No description.'}
+            </button>
           )}
         </div>
 
-        <div className="border-t border-[#e3e8ef] pt-3">
+        <div>
+          <span className={labelCls}>Labels</span>
+          {canEdit ? (
+            <LabelEditor
+              value={labels}
+              suggestions={labelSuggestions}
+              onChange={(next) => {
+                setLabels(next)
+                onUpdate({ labels: next })
+              }}
+            />
+          ) : labels.length > 0 ? (
+            <LabelChips labels={labels} />
+          ) : (
+            <p className="text-sm text-zinc-400">No labels.</p>
+          )}
+        </div>
+
+        {!isSubtask && (
+          <div className="border-t border-zinc-200 pt-5">
+            <SubtasksSection
+              subtasks={subtasks}
+              members={members}
+              canEdit={canEdit}
+              value={newSubtask}
+              onChange={setNewSubtask}
+              onAdd={() => {
+                const title = newSubtask.trim()
+                if (!title) return
+                onAddSubtask(title)
+                setNewSubtask('')
+              }}
+              onToggle={onToggleSubtask}
+              onDelete={onDeleteSubtask}
+            />
+          </div>
+        )}
+
+        <div className="border-t border-zinc-200 pt-5">
           <button
-            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-[#1f6feb]"
+            className="flex items-center gap-2 text-sm font-medium text-zinc-700 transition-colors hover:text-zinc-900"
             onClick={() => setShowComments((v) => !v)}
           >
-            <MessageSquare size={13} /> Comments
-            {comments.length > 0 && <span className="rounded-full bg-[#eef2f8] px-1.5 py-px text-[10px]">{comments.length}</span>}
+            <MessageSquare size={15} className="text-zinc-400" /> Comments
+            {comments.length > 0 && (
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">{comments.length}</span>
+            )}
           </button>
           {showComments && (
-            <div className="mt-3 flex flex-col gap-3">
+            <div className="mt-4 flex flex-col gap-4">
               {canEdit && (
-                <div className="flex gap-2">
-                  <input
+                <div className="flex flex-col gap-2">
+                  <textarea
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && void addComment()}
-                    placeholder="Add a comment…"
-                    className={inputCls}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                        e.preventDefault()
+                        void addComment()
+                      }
+                    }}
+                    rows={3}
+                    placeholder="Leave a comment… (⌘+↵ to send)"
+                    className={textareaCls}
                   />
-                  <button className="shrink-0 rounded-md bg-[#1f6feb] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1963d8]" onClick={() => void addComment()} disabled={!commentText.trim()}>
-                    Add
-                  </button>
+                  <div className="flex justify-end">
+                    <button className={btnPrimary} onClick={() => void addComment()} disabled={!commentText.trim()}>
+                      <MessageSquare size={15} /> Comment
+                    </button>
+                  </div>
                 </div>
               )}
               {comments.length === 0 ? (
-                <p className="text-[11px] text-slate-300">No comments yet.</p>
+                <p className="text-sm text-zinc-400">No comments yet.</p>
               ) : (
-                <div className="flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
+                <div className="flex flex-col gap-3">
                   {comments.map((c) => (
-                    <div key={c.id} className="rounded-md border border-[#e3e8ef] px-3 py-2">
-                      <div className="text-[10px] font-medium text-slate-500">
-                        {c.author ?? 'Team member'}
-                        <span className="ml-2 font-normal text-slate-300">{formatDate(c.createdAt)}</span>
+                    <div key={c.id} className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium text-zinc-800">{c.author ?? 'Team member'}</span>
+                        <span className="text-xs text-zinc-400">{formatDate(c.createdAt)}</span>
                       </div>
-                      <p className="mt-0.5 whitespace-pre-wrap text-xs text-slate-600">{c.body}</p>
+                      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-zinc-600">{c.body}</p>
                     </div>
                   ))}
                 </div>
@@ -1891,19 +2789,8 @@ function TaskDialog({
             </div>
           )}
         </div>
-
-        <div className="flex min-h-[18px] items-center justify-between border-t border-[#e3e8ef] pt-2 text-[10px] text-slate-300">
-          {pending ? (
-            <span className="flex items-center gap-1 text-[#1f6feb]">
-              <CircleDot className="animate-spin" size={11} /> Saving…
-            </span>
-          ) : (
-            <span>Updated {formatDate(task.updatedAt)}</span>
-          )}
-          <span className="text-slate-300">{task.area}</span>
-        </div>
       </div>
-    </Dialog>
+    </Drawer>
   )
 }
 
@@ -1926,57 +2813,96 @@ function Sidebar({
   onSignOut: () => void
   onCreate: () => void
 }) {
-  const navItems: { label: string; icon: ReactNode }[] = [
-    { label: 'My work', icon: <ListChecks size={15} /> },
-    { label: 'Sprint board', icon: <Layers3 size={15} /> },
-    { label: 'Backlog', icon: <FolderKanban size={15} /> },
-    { label: 'Epics', icon: <Zap size={15} /> },
-    { label: 'Projects', icon: <FolderOpen size={15} /> },
-    { label: 'Teams', icon: <Users size={15} /> },
-    { label: 'Sprint history', icon: <History size={15} /> },
+  // Grouped so the sidebar reads as "where am I" then "what am I planning".
+  const navGroups: { heading?: string; items: { label: string; icon: ReactNode }[] }[] = [
+    {
+      items: [
+        { label: 'Dashboard', icon: <LayoutDashboard size={16} /> },
+        { label: 'My work', icon: <ListChecks size={16} /> },
+      ],
+    },
+    {
+      heading: 'Plan',
+      items: [
+        { label: 'Sprint board', icon: <Layers3 size={16} /> },
+        { label: 'Backlog', icon: <FolderKanban size={16} /> },
+        { label: 'Epics', icon: <Zap size={16} /> },
+        { label: 'Sprint history', icon: <History size={16} /> },
+      ],
+    },
+    {
+      heading: 'Workspace',
+      items: [
+        { label: 'Projects', icon: <FolderOpen size={16} /> },
+        { label: 'Teams', icon: <Users size={16} /> },
+      ],
+    },
   ]
   return (
-    <div className="flex h-full w-60 flex-col border-r border-[#e3e8ef] bg-white">
-      <div className="flex items-center gap-2 border-b border-[#e3e8ef] px-4 py-3.5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#1f6feb] to-[#3b82f6] text-sm font-bold text-white shadow-sm">
+    <div className="flex h-full w-64 flex-col border-r border-zinc-200 bg-white">
+      <div className="flex items-center gap-2.5 px-5 py-4">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-900 text-sm font-semibold text-white">
           O
         </div>
-        <div>
-          <div className="text-sm font-semibold leading-tight text-slate-800">Orbit</div>
-          <div className="text-[10px] leading-tight text-slate-400">Engineering workspace</div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold tracking-tight text-zinc-900">Orbit</div>
+          <div className="truncate text-xs text-zinc-500">Engineering workspace</div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 border-b border-[#e3e8ef] p-3">
-        <Metric label="Projects" count={projectCount} />
-        <Metric label="Active sprints" count={activeSprintCount} />
+
+      <div className="px-3 pb-3">
+        <button className={`${btnPrimary} w-full`} onClick={onCreate}>
+          <Plus size={16} /> New work item
+        </button>
       </div>
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
-        {navItems.map((item) => (
-          <button
-            key={item.label}
-            onClick={() => onNavigate(item.label)}
-            className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium transition-colors ${
-              active === item.label ? 'bg-[#eef4ff] text-[#1f6feb]' : 'text-slate-500 hover:bg-[#f4f6fb] hover:text-slate-700'
-            }`}
-          >
-            {item.icon} {item.label}
-          </button>
+
+      <nav className="flex-1 overflow-y-auto px-3 pb-3">
+        {navGroups.map((group, i) => (
+          <div key={group.heading ?? i} className={i > 0 ? 'mt-5' : ''}>
+            {group.heading && (
+              <div className="mb-1.5 px-2.5 text-[11px] font-medium uppercase tracking-wider text-zinc-400">
+                {group.heading}
+              </div>
+            )}
+            <div className="space-y-0.5">
+              {group.items.map((item) => {
+                const isActive = active === item.label
+                return (
+                  <button
+                    key={item.label}
+                    onClick={() => onNavigate(item.label)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
+                      isActive
+                        ? 'bg-zinc-100 font-medium text-zinc-900'
+                        : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'
+                    }`}
+                  >
+                    <span className={isActive ? 'text-zinc-900' : 'text-zinc-400'}>{item.icon}</span>
+                    {item.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         ))}
       </nav>
-      <div className="border-t border-[#e3e8ef] p-3">
-        <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[#f4f6fb]">
-          <Avatar name={currentUser.displayName || '?'} color={currentUser.avatarColor} />
+
+      <div className="border-t border-zinc-200 p-3">
+        <div className="mb-2 grid grid-cols-2 gap-2">
+          <Metric label="Projects" count={projectCount} />
+          <Metric label="Active sprints" count={activeSprintCount} />
+        </div>
+        <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-zinc-50">
+          <Avatar name={currentUser.displayName || '?'} color={currentUser.avatarColor} size={30} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-medium text-slate-800">{currentUser.displayName || 'Member'}</div>
-            <div className="text-[10px] capitalize text-slate-400">{currentUser.role}</div>
+            <div className="truncate text-sm font-medium text-zinc-900">{currentUser.displayName || 'Member'}</div>
+            <div className="text-xs capitalize text-zinc-500">{currentUser.role}</div>
           </div>
-          <button onClick={onSignOut} title="Sign out" className="text-slate-300 hover:text-slate-600">
-            <Settings2 size={15} />
+          <button onClick={onSignOut} title="Sign out" aria-label="Sign out" className={iconBtn}>
+            <Settings2 size={16} />
           </button>
         </div>
-        <button className={btnPrimary + ' mt-2 w-full justify-center'} onClick={onCreate}>
-          <Plus size={13} /> Create task
-        </button>
       </div>
     </div>
   )
@@ -2008,7 +2934,7 @@ export default function WorkspaceClient({
   const [sprints, setSprints] = useState<Sprint[]>(initialSprints)
   const [epics, setEpics] = useState<Epic[]>(initialEpics)
 
-  const [active, setActive] = useState('My work')
+  const [active, setActive] = useState('Dashboard')
   const [selected, setSelected] = useState<TaskWithProject | null>(null)
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
@@ -2023,6 +2949,7 @@ export default function WorkspaceClient({
   const [createTeamOpen, setCreateTeamOpen] = useState(false)
   const [boardProjectId, setBoardProjectId] = useState<string | null>(initialProjects[0]?.id ?? null)
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all')
+  const [labelFilter, setLabelFilter] = useState<string>('all')
   const [allUsers, setAllUsers] = useState<Awaited<ReturnType<typeof listAllUsers>> | null>(null)
   const [allUsersLoading, setAllUsersLoading] = useState(false)
 
@@ -2053,10 +2980,27 @@ export default function WorkspaceClient({
   })
 
   const scopedTasks = visibleTasks.filter((task) => {
-    if (assigneeFilter === 'all') return true
-    if (assigneeFilter === 'me') return task.assigneeId === currentUser.userId
-    return task.assigneeId === assigneeFilter
+    const okAssignee =
+      assigneeFilter === 'all'
+        ? true
+        : assigneeFilter === 'me'
+          ? task.assigneeId === currentUser.userId
+          : task.assigneeId === assigneeFilter
+    const okLabel = labelFilter === 'all' ? true : parseLabels(task.labels).includes(labelFilter)
+    return okAssignee && okLabel
   })
+
+  // Labels present across the workspace — powers autocomplete and the label filter.
+  const allLabels = Array.from(new Set(tasks.flatMap((t) => parseLabels(t.labels)))).sort()
+
+  // Subtask rollups are derived from the loaded task list (subtasks are task rows
+  // carrying a parentId), so board/detail progress stays live without an extra fetch.
+  const childrenOf = (taskId: string) => tasks.filter((t) => t.parentId === taskId)
+  const subtaskProgress = (taskId: string): { done: number; total: number } | null => {
+    const kids = childrenOf(taskId)
+    if (kids.length === 0) return null
+    return { done: kids.filter((k) => k.status === 'Done').length, total: kids.length }
+  }
 
   const assigneeOptions = members
     .filter((m, i, arr) => arr.findIndex((x) => x.userId === m.userId) === i)
@@ -2133,15 +3077,79 @@ export default function WorkspaceClient({
 
   function saveTask(id: string, patch: Parameters<typeof updateTask>[1]) {
     setError('')
-    const { dueDate, ...rest } = patch
+    const { dueDate, labels, ...rest } = patch
     const taskPatch: Partial<Task> = { ...rest }
     if (dueDate !== undefined) taskPatch.dueDate = dueDate === null ? null : new Date(dueDate)
+    if (labels !== undefined) taskPatch.labels = serializeLabels(labels)
     refreshTask(id, taskPatch)
     startTransition(async () => {
       try {
         await updateTask(id, patch)
       } catch (e) {
         setError(formatError(e))
+      }
+    })
+  }
+
+  function submitCreateSubtask(parent: TaskWithProject, title: string) {
+    setError('')
+    startTransition(async () => {
+      try {
+        const created = await createSubtask({ parentId: parent.id, title })
+        const row: TaskWithProject = {
+          id: created.id,
+          key: created.key,
+          projectId: parent.projectId,
+          projectKey: parent.projectKey,
+          projectName: parent.projectName,
+          epicId: parent.epicId ?? null,
+          parentId: parent.id,
+          title,
+          description: '',
+          type: 'Subtask',
+          priority: 'Medium',
+          status: 'To do',
+          labels: '',
+          dueDate: null,
+          area: 'Engineering',
+          points: 1,
+          assigneeId: null,
+          reporterId: currentUser.userId,
+          sprintId: null,
+          blocked: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }
+        setTasks((items) => [...items, row])
+      } catch (e) {
+        setError(formatError(e))
+      }
+    })
+  }
+
+  function toggleSubtask(sub: TaskWithProject, done: boolean) {
+    setError('')
+    const next = done ? 'Done' : 'To do'
+    refreshTask(sub.id, { status: next })
+    startTransition(async () => {
+      try {
+        await setSubtaskDone(sub.id, done)
+      } catch (e) {
+        setError(formatError(e))
+        refreshTask(sub.id, { status: sub.status })
+      }
+    })
+  }
+
+  function removeSubtask(sub: TaskWithProject) {
+    setError('')
+    setTasks((items) => items.filter((item) => item.id !== sub.id))
+    startTransition(async () => {
+      try {
+        await deleteSubtask(sub.id)
+      } catch (e) {
+        setError(formatError(e))
+        setTasks((items) => (items.some((item) => item.id === sub.id) ? items : [...items, sub]))
       }
     })
   }
@@ -2168,7 +3176,9 @@ export default function WorkspaceClient({
           assigneeId: input.assigneeId ?? null,
           reporterId: currentUser.userId,
           epicId: input.epicId ?? null,
+          parentId: null,
           sprintId: input.sprintId ?? null,
+          labels: serializeLabels(input.labels ?? []),
           dueDate: input.dueDate ? new Date(input.dueDate) : null,
           blocked: false,
           createdAt: new Date(),
@@ -2472,15 +3482,21 @@ export default function WorkspaceClient({
   /* ---------- derived view data ---------- */
 
   const myTasks = visibleTasks
-    .filter((task) => task.assigneeId === currentUser.userId)
+    .filter((task) => task.assigneeId === currentUser.userId && !task.parentId)
+    .filter((task) => labelFilter === 'all' || parseLabels(task.labels).includes(labelFilter))
     .sort((a, b) => statusRank(a.status) - statusRank(b.status))
 
   const activeSprintCount = sprints.filter((s) => s.status === 'active').length
 
+  // Board and backlog operate on top-level work items; subtasks live inside their parent.
   const boardProject = boardProjectId ? projectMap.get(boardProjectId) : undefined
-  const boardTasks = boardProject ? scopedTasks.filter((t) => t.projectId === boardProject.id) : []
+  const boardTasks = boardProject
+    ? scopedTasks.filter((t) => t.projectId === boardProject.id && !t.parentId)
+    : []
 
-  const backlogTasks = scopedTasks.filter((t) => t.sprintId === null)
+  const backlogTasks = scopedTasks.filter((t) => t.sprintId === null && !t.parentId)
+
+  const topLevelVisibleTasks = visibleTasks.filter((t) => !t.parentId)
   const sprintOptionsFor = (task: TaskWithProject) =>
     sprints
       .filter((s) => s.projectId === task.projectId && (s.status === 'planned' || s.status === 'active'))
@@ -2490,10 +3506,13 @@ export default function WorkspaceClient({
 
   const selectedProject = selected ? projectMap.get(selected.projectId) : undefined
 
+  // Assignee/label filters only make sense on the task-listing views.
+  const showFilters = active === 'Sprint board' || active === 'Backlog' || active === 'My work'
+
   /* ---------- render ---------- */
 
   return (
-    <div className="flex h-screen bg-[#f4f6fb] font-sans text-slate-800">
+    <div className="flex h-screen bg-zinc-50 font-sans text-zinc-900">
       {/* Desktop sidebar */}
       <div className="hidden h-full md:block">
         <Sidebar
@@ -2509,8 +3528,11 @@ export default function WorkspaceClient({
 
       {/* Mobile sidebar */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 flex bg-black/40 md:hidden" onClick={() => setMobileOpen(false)}>
-          <div className="h-full" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="animate-overlay-in fixed inset-0 z-40 flex bg-zinc-950/30 backdrop-blur-[2px] md:hidden"
+          onClick={() => setMobileOpen(false)}
+        >
+          <div className="h-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <Sidebar
               currentUser={currentUser}
               projectCount={projects.length}
@@ -2531,39 +3553,46 @@ export default function WorkspaceClient({
       )}
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center gap-3 border-b border-[#e3e8ef] bg-white/90 px-4 py-2.5 backdrop-blur">
-          <button className="text-slate-400 hover:text-slate-600 md:hidden" onClick={() => setMobileOpen(true)}>
+        <header className="flex shrink-0 items-center gap-3 border-b border-zinc-200 bg-white/80 px-4 py-3 backdrop-blur-md sm:px-6">
+          <button
+            className={`${iconBtn} md:hidden`}
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open navigation"
+          >
             <Menu size={18} />
           </button>
-          <div className="relative max-w-md flex-1">
-            <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-300" />
+          <div className="relative max-w-sm flex-1">
+            <Search
+              size={15}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
+            />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by key, title, or project…"
-              className="w-full rounded-md border border-[#e3e8ef] bg-[#f4f6fb] py-1.5 pl-8 pr-8 text-xs outline-none focus:border-[#1f6feb] focus:bg-white"
+              placeholder="Search work items…"
+              className={`w-full rounded-lg border border-zinc-200 bg-zinc-50 py-2 pl-9 pr-9 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 focus:bg-white ${focusRing}`}
             />
             {query && (
-              <button onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-600">
-                <X size={13} />
+              <button
+                onClick={() => setQuery('')}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+              >
+                <X size={14} />
               </button>
             )}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            {active === 'Sprint board' && boardProject && (
-              <span className="hidden items-center gap-1.5 rounded-full bg-[#eef2f8] px-2.5 py-1 text-[10px] text-slate-500 sm:flex">
-                <Check size={11} className="text-[#1f6feb]" /> {boardProject.name} · {boardProject.key}
-              </span>
-            )}
-            {(active === 'Sprint board' || active === 'Backlog' || active === 'My work') && (
+            {showFilters && (
               <select
                 value={assigneeFilter}
                 onChange={(e) => setAssigneeFilter(e.target.value)}
-                title="Filter tasks by assignee"
-                className="hidden rounded-md border border-[#e3e8ef] bg-white px-2 py-1.5 text-[10px] text-slate-500 outline-none focus:border-[#1f6feb] sm:block"
+                title="Filter by assignee"
+                aria-label="Filter by assignee"
+                className={`hidden sm:block ${selectMini}`}
               >
-                <option value="all">All tasks</option>
-                <option value="me">Only my tasks</option>
+                <option value="all">Everyone</option>
+                <option value="me">Only me</option>
                 {assigneeOptions.map((m) => (
                   <option key={m.userId} value={m.userId}>
                     {m.displayName}
@@ -2571,39 +3600,73 @@ export default function WorkspaceClient({
                 ))}
               </select>
             )}
+            {showFilters && allLabels.length > 0 && (
+              <select
+                value={labelFilter}
+                onChange={(e) => setLabelFilter(e.target.value)}
+                title="Filter by label"
+                aria-label="Filter by label"
+                className={`hidden sm:block ${selectMini}`}
+              >
+                <option value="all">All labels</option>
+                {allLabels.map((label) => (
+                  <option key={label} value={label}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            )}
             {isPending && (
-              <span className="flex items-center gap-1.5 rounded-full bg-[#eef2f8] px-2.5 py-1 text-[10px] text-slate-400">
-                <CircleDot size={11} className="animate-spin" /> Working…
+              <span className="hidden items-center gap-1.5 text-xs text-zinc-500 sm:flex">
+                <CircleDot size={12} className="animate-spin" /> Saving
               </span>
             )}
-            <button className="rounded-md p-1.5 text-slate-400 hover:bg-[#f4f6fb] hover:text-slate-600" title="Notifications">
-              <Bell size={15} />
+            <button className={iconBtn} title="Notifications" aria-label="Notifications">
+              <Bell size={17} />
             </button>
             <button className={btnPrimary} onClick={openCreate}>
-              <Plus size={14} /> Create
+              <Plus size={16} /> <span className="hidden sm:inline">New</span>
             </button>
           </div>
         </header>
 
         {error && (
-          <div className="flex items-center gap-2 border-b border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">
-            <AlertCircle size={13} /> {error}
-            <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-600">
-              <X size={13} />
+          <div className="flex shrink-0 items-center gap-2 border-b border-red-100 bg-red-50 px-4 py-2.5 text-sm text-red-700 sm:px-6">
+            <AlertCircle size={15} className="shrink-0" /> {error}
+            <button onClick={() => setError('')} className="ml-auto rounded p-1 hover:bg-red-100" aria-label="Dismiss">
+              <X size={14} />
             </button>
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
+          {active === 'Dashboard' && (
+            <div className="flex flex-col gap-6">
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
+                  {greeting()}, {currentUser.displayName || 'there'}
+                </h2>
+                <p className="mt-0.5 text-sm text-zinc-500">Here's what's happening across your teams.</p>
+              </div>
+              <DashboardView
+                tasks={tasks.filter((t) => !t.parentId)}
+                members={members}
+                sprints={sprints}
+                currentUser={currentUser}
+                onSelect={setSelected}
+              />
+            </div>
+          )}
+
           {active === 'My work' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800">My work</h2>
-                  <p className="text-xs text-slate-400">{myTasks.length} tasks assigned to you</p>
+                  <h2 className="text-xl font-semibold tracking-tight text-zinc-900">My work</h2>
+                  <p className="mt-0.5 text-sm text-zinc-500">{myTasks.length} tasks assigned to you</p>
                 </div>
                 <button className={btnPrimary} onClick={openCreate}>
-                  <Plus size={13} /> Create task
+                  <Plus size={15} /> New work item
                 </button>
               </div>
               {myTasks.length === 0 ? (
@@ -2611,7 +3674,7 @@ export default function WorkspaceClient({
                   icon={<ListChecks size={30} />}
                   title="No tasks assigned to you"
                   hint="Create a task and assign yourself to see it here."
-                  action={{ label: 'Create task', onClick: openCreate }}
+                  action={{ label: 'New work item', onClick: openCreate }}
                 />
               ) : (
                 <div className="flex flex-col gap-2">
@@ -2622,6 +3685,7 @@ export default function WorkspaceClient({
                       currentUser={currentUser}
                       members={members}
                       canEdit={canEditTask(task)}
+                      subtask={subtaskProgress(task.id)}
                       onSelect={setSelected}
                       onStatus={saveStatus}
                       onDelete={removeTask}
@@ -2633,17 +3697,17 @@ export default function WorkspaceClient({
           )}
 
           {active === 'Sprint board' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800">Sprint board</h2>
-                  <p className="text-xs text-slate-400">Drag tasks between columns to update status and sprint.</p>
+                  <h2 className="text-xl font-semibold tracking-tight text-zinc-900">Sprint board</h2>
+                  <p className="mt-0.5 text-sm text-zinc-500">Drag tasks between columns to update status and sprint.</p>
                 </div>
                 {projects.length > 0 && (
                   <select
                     value={boardProjectId ?? ''}
                     onChange={(e) => setBoardProjectId(e.target.value || null)}
-                    className={inputCls + ' w-auto'}
+                    className={selectCls + ' w-auto'}
                   >
                     {projects.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -2663,6 +3727,7 @@ export default function WorkspaceClient({
                   currentUser={currentUser}
                   canManage={canManageProject(boardProject)}
                   canEditTask={canEditTask}
+                  subtaskFor={subtaskProgress}
                   onSelect={setSelected}
                   onStatus={saveStatus}
                   onAssign={assignSprint}
@@ -2684,14 +3749,14 @@ export default function WorkspaceClient({
           )}
 
           {active === 'Backlog' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800">Backlog</h2>
-                  <p className="text-xs text-slate-400">{backlogTasks.length} tasks without a sprint</p>
+                  <h2 className="text-xl font-semibold tracking-tight text-zinc-900">Backlog</h2>
+                  <p className="mt-0.5 text-sm text-zinc-500">{backlogTasks.length} tasks without a sprint</p>
                 </div>
                 <button className={btnPrimary} onClick={openCreate}>
-                  <Plus size={13} /> Add to backlog
+                  <Plus size={15} /> Add to backlog
                 </button>
               </div>
               {backlogTasks.length === 0 ? (
@@ -2710,6 +3775,7 @@ export default function WorkspaceClient({
                       currentUser={currentUser}
                       members={members}
                       canEdit={canEditTask(task)}
+                      subtask={subtaskProgress(task.id)}
                       onSelect={setSelected}
                       onStatus={saveStatus}
                       onDelete={removeTask}
@@ -2723,14 +3789,14 @@ export default function WorkspaceClient({
           )}
 
           {active === 'Epics' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800">Epics</h2>
-                  <p className="text-xs text-slate-400">{epics.length} epics across {epicProjects.length} projects</p>
+                  <h2 className="text-xl font-semibold tracking-tight text-zinc-900">Epics</h2>
+                  <p className="mt-0.5 text-sm text-zinc-500">{epics.length} epics across {epicProjects.length} projects</p>
                 </div>
                 <button className={btnPrimary} onClick={() => setCreateEpicOpen(true)}>
-                  <Plus size={13} /> Create epic
+                  <Plus size={15} /> Create epic
                 </button>
               </div>
               {epics.length === 0 ? (
@@ -2744,7 +3810,7 @@ export default function WorkspaceClient({
                 <EpicsView
                   epics={epics}
                   projects={projects}
-                  tasks={visibleTasks}
+                  tasks={topLevelVisibleTasks}
                   canManageEpic={(epic) => {
                     const project = projectMap.get(epic.projectId)
                     return project ? canManageProject(project) : false
@@ -2757,15 +3823,15 @@ export default function WorkspaceClient({
           )}
 
           {active === 'Projects' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800">Projects</h2>
-                  <p className="text-xs text-slate-400">{projects.length} projects</p>
+                  <h2 className="text-xl font-semibold tracking-tight text-zinc-900">Projects</h2>
+                  <p className="mt-0.5 text-sm text-zinc-500">{projects.length} projects</p>
                 </div>
                 {canCreateProject && (
                   <button className={btnPrimary} onClick={() => setCreateProjectOpen(true)}>
-                    <Plus size={13} /> Create project
+                    <Plus size={15} /> Create project
                   </button>
                 )}
               </div>
@@ -2781,7 +3847,7 @@ export default function WorkspaceClient({
                   projects={projects}
                   teams={teams}
                   members={members}
-                  tasks={visibleTasks}
+                  tasks={topLevelVisibleTasks}
                   canManageProject={canManageProject}
                   onEdit={setEditProject}
                   onDelete={removeProject}
@@ -2791,16 +3857,16 @@ export default function WorkspaceClient({
           )}
 
           {active === 'Teams' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-800">Teams</h2>
-                  <p className="text-xs text-slate-400">
+                  <h2 className="text-xl font-semibold tracking-tight text-zinc-900">Teams</h2>
+                  <p className="mt-0.5 text-sm text-zinc-500">
                     {teams.length} teams · {members.length} members
                   </p>
                 </div>
                 <button className={btnPrimary} onClick={() => setCreateTeamOpen(true)}>
-                  <Plus size={13} /> Create team
+                  <Plus size={15} /> Create team
                 </button>
               </div>
               {teams.length === 0 ? (
@@ -2829,10 +3895,10 @@ export default function WorkspaceClient({
           )}
 
           {active === 'Sprint history' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               <div>
-                <h2 className="text-sm font-semibold text-slate-800">Sprint history</h2>
-                <p className="text-xs text-slate-400">Completed sprints and what they delivered.</p>
+                <h2 className="text-xl font-semibold tracking-tight text-zinc-900">Sprint history</h2>
+                <p className="mt-0.5 text-sm text-zinc-500">Completed sprints and what they delivered.</p>
               </div>
               <HistoryView sprints={sprints} projects={projects} tasks={visibleTasks} />
             </div>
@@ -2849,6 +3915,7 @@ export default function WorkspaceClient({
           epics={epics}
           sprints={sprints}
           currentUser={currentUser}
+          labelSuggestions={allLabels}
           pending={isPending}
           onClose={() => setCreateFor(null)}
           onCreate={submitCreateTask}
@@ -2901,10 +3968,15 @@ export default function WorkspaceClient({
           sprints={sprints}
           currentUser={currentUser}
           canEdit={canEditTask(selected)}
+          labelSuggestions={allLabels}
+          subtasks={childrenOf(selected.id)}
           pending={isPending}
           onClose={() => setSelected(null)}
           onDelete={removeTask}
           onUpdate={(patch) => saveTask(selected.id, patch)}
+          onAddSubtask={(title) => submitCreateSubtask(selected, title)}
+          onToggleSubtask={toggleSubtask}
+          onDeleteSubtask={removeSubtask}
         />
       )}
     </div>

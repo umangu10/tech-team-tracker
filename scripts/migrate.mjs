@@ -120,11 +120,13 @@ CREATE TABLE IF NOT EXISTS "task" (
   key text NOT NULL UNIQUE,
   "projectId" text NOT NULL REFERENCES "project"(id) ON DELETE CASCADE,
   "epicId" text REFERENCES "epic"(id) ON DELETE SET NULL,
+  "parentId" text REFERENCES "task"(id) ON DELETE CASCADE,
   title text NOT NULL,
   description text NOT NULL DEFAULT '',
   type text NOT NULL DEFAULT 'Task',
   priority text NOT NULL DEFAULT 'Medium',
   status text NOT NULL DEFAULT 'To do',
+  labels text NOT NULL DEFAULT '',
   "dueDate" timestamp,
   area text NOT NULL DEFAULT 'Engineering',
   points integer NOT NULL DEFAULT 3,
@@ -154,6 +156,11 @@ CREATE TABLE IF NOT EXISTS "activity" (
 
 CREATE INDEX IF NOT EXISTS "idx_task_sprint" ON "task" ("sprintId");
 CREATE INDEX IF NOT EXISTS "idx_task_epic" ON "task" ("epicId");
+
+-- Additive columns for existing databases (subtasks + labels). Safe to re-run.
+ALTER TABLE "task" ADD COLUMN IF NOT EXISTS "parentId" text REFERENCES "task"(id) ON DELETE CASCADE;
+ALTER TABLE "task" ADD COLUMN IF NOT EXISTS labels text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS "idx_task_parent" ON "task" ("parentId");
 `
 
 async function columnExists(table, column) {

@@ -31,40 +31,109 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ---------------------------------------------------------------------------
+   Minimal neutral design system.
+   Surfaces are near-white greys, actions are near-black, and a single indigo
+   accent carries emphasis (keys, active nav, focus rings).
+   --------------------------------------------------------------------------- */
+
 :root {
   color-scheme: light;
-  --background: #f4f6fb;
-  --foreground: #16202f;
+  --background: #fafafa;
+  --foreground: #18181b;
   --card: #ffffff;
-  --card-foreground: #16202f;
+  --card-foreground: #18181b;
   --popover: #ffffff;
-  --popover-foreground: #16202f;
-  --primary: #1f6feb;
+  --popover-foreground: #18181b;
+  --primary: #18181b;
   --primary-foreground: #ffffff;
-  --secondary: #e9eef6;
-  --secondary-foreground: #243049;
-  --muted: #e9eef6;
-  --muted-foreground: #5f6b7d;
-  --accent: #e9eef6;
-  --accent-foreground: #243049;
-  --border: #e3e8ef;
-  --input: #e3e8ef;
-  --ring: #1f6feb;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #27272a;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #4f46e5;
+  --accent-foreground: #ffffff;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #4f46e5;
   --radius: 0.625rem;
 }
 
 @layer base {
   * { @apply border-border outline-ring/50; }
-  body { @apply bg-background text-foreground; }
-  button, select, input { font: inherit; }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  button, select, input, textarea { font: inherit; }
+  /* Quieter, thinner scrollbars keep dense views calm. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #d4d4d8 transparent;
+  }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background-color: #d4d4d8;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background-color: #a1a1aa; }
 }
 
 @layer utilities {
   .text-balance { text-wrap: balance; }
+
+  /* Native select, normalized: OS chrome removed, consistent chevron added. */
+  .select-field {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.55rem center;
+    background-size: 0.9em;
+    padding-right: 2rem;
+  }
+  .select-field::-ms-expand { display: none; }
+
   .surface-card {
-    @apply rounded-xl border border-[#e3e8ef] bg-white shadow-[0_1px_2px_rgba(15,35,64,0.04),0_4px_16px_rgba(15,35,64,0.04)];
+    @apply rounded-xl border border-[#e4e4e7] bg-white shadow-[0_1px_2px_rgba(24,24,27,0.04)];
   }
   .surface-soft {
-    @apply rounded-lg border border-[#e3e8ef] bg-[#eef2f8];
+    @apply rounded-lg border border-[#e4e4e7] bg-[#f4f4f5];
+  }
+
+  /* Slide-over / dialog motion. Short and eased so the UI feels quick. */
+  .animate-overlay-in {
+    animation: overlay-in 160ms ease-out;
+  }
+  .animate-drawer-in {
+    animation: drawer-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .animate-modal-in {
+    animation: modal-in 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  @keyframes overlay-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes drawer-in {
+    from { transform: translateX(16px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes modal-in {
+    from { transform: translateY(6px) scale(0.99); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-overlay-in,
+  .animate-drawer-in,
+  .animate-modal-in {
+    animation: none;
   }
 }

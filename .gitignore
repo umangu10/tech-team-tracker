@@ -17,3 +17,6 @@ tsconfig.tsbuildinfo
 
 # Agent testing artifacts
 .playwright-mcp/
+
+# Local userspace Postgres data dir (dev only)
+.localdb/

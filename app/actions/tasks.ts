@@ -8,6 +8,7 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TYPES,
+  serializeLabels,
   type TaskPriority,
   type TaskStatus,
   type TaskType,
@@ -53,6 +54,7 @@ export async function createTask(input: {
   points?: number
   epicId?: string
   sprintId?: string
+  labels?: string[]
 }) {
   const userId = await getUserId()
   requireTeamMember(await getTeamRoleForProject(input.projectId, userId))
@@ -74,6 +76,7 @@ export async function createTask(input: {
       type,
       priority,
       status: 'To do',
+      labels: serializeLabels(input.labels ?? []),
       dueDate: input.dueDate ? new Date(input.dueDate) : null,
       assigneeId: input.assigneeId || userId,
       reporterId: userId,
@@ -108,6 +111,7 @@ export async function updateTask(
     area?: string
     points?: number
     blocked?: boolean
+    labels?: string[]
   },
 ) {
   const userId = await getUserId()
@@ -151,6 +155,7 @@ export async function updateTask(
   if (input.area !== undefined) changes.area = clean(input.area)
   if (input.points !== undefined) changes.points = Math.max(1, Math.round(input.points))
   if (input.blocked !== undefined) changes.blocked = input.blocked
+  if (input.labels !== undefined) changes.labels = serializeLabels(input.labels)
 
   await db.update(task).set(changes).where(eq(task.id, id))
 
@@ -229,6 +234,119 @@ export async function getTaskDetails(taskId: string) {
     .from(taskComment)
     .leftJoin(user, eq(user.id, taskComment.authorId))
     .where(eq(taskComment.taskId, taskId))
+}
+
+// ---- subtasks (child work items under a parent task) ----
+
+/** Whether the current user may modify the given task (assignee/reporter, or team admin/lead). */
+async function assertCanEditTask(taskId: string, userId: string) {
+  const [row] = await db
+    .select({ projectId: task.projectId, assigneeId: task.assigneeId, reporterId: task.reporterId })
+    .from(task)
+    .where(eq(task.id, taskId))
+    .limit(1)
+  if (!row) throw new Error('Task not found')
+  const role = await getTeamRoleForProject(row.projectId, userId)
+  const isOwner = row.assigneeId === userId || row.reporterId === userId
+  if (!isOwner && role !== 'admin' && role !== 'lead')
+    throw new Error('You can only manage tasks assigned to you or created by you')
+  return row
+}
+
+export async function createSubtask(input: { parentId: string; title: string; assigneeId?: string }) {
+  const userId = await getUserId()
+
+  const title = clean(input.title)
+  if (!title) throw new Error('Subtask title is required')
+
+  const [parent] = await db
+    .select({ projectId: task.projectId, parentId: task.parentId, epicId: task.epicId })
+    .from(task)
+    .where(eq(task.id, input.parentId))
+    .limit(1)
+  if (!parent) throw new Error('Parent task not found')
+  if (parent.parentId) throw new Error('Subtasks cannot have their own subtasks')
+  requireTeamMember(await getTeamRoleForProject(parent.projectId, userId))
+
+  const id = crypto.randomUUID()
+  const key = await insertTaskWithKey(
+    {
+      id,
+      title,
+      description: '',
+      type: 'Subtask',
+      priority: 'Medium',
+      status: 'To do',
+      labels: '',
+      dueDate: null,
+      assigneeId: input.assigneeId || null,
+      reporterId: userId,
+      area: 'Engineering',
+      points: 1,
+      epicId: parent.epicId ?? null,
+      parentId: input.parentId,
+      sprintId: null,
+    },
+    parent.projectId,
+  )
+
+  await db
+    .insert(activity)
+    .values({ id: crypto.randomUUID(), actorId: userId, taskId: input.parentId, action: `added subtask ${key}` })
+
+  revalidatePath('/')
+  return { id, key }
+}
+
+export async function getSubtasks(parentId: string) {
+  const userId = await getUserId()
+
+  const [parent] = await db
+    .select({ projectId: task.projectId })
+    .from(task)
+    .where(eq(task.id, parentId))
+    .limit(1)
+  if (!parent) throw new Error('Parent task not found')
+  requireTeamMember(await getTeamRoleForProject(parent.projectId, userId))
+
+  return db
+    .select({
+      id: task.id,
+      key: task.key,
+      title: task.title,
+      status: task.status,
+      priority: task.priority,
+      assigneeId: task.assigneeId,
+    })
+    .from(task)
+    .where(eq(task.parentId, parentId))
+    .orderBy(task.createdAt)
+}
+
+/** Toggle a subtask between Done and To do. */
+export async function setSubtaskDone(id: string, done: boolean) {
+  const userId = await getUserId()
+  await assertCanEditTask(id, userId)
+  const [full] = await db.select({ parentId: task.parentId }).from(task).where(eq(task.id, id)).limit(1)
+  if (!full?.parentId) throw new Error('Not a subtask')
+
+  await db
+    .update(task)
+    .set({ status: done ? 'Done' : 'To do', updatedAt: new Date() })
+    .where(eq(task.id, id))
+  revalidatePath('/')
+}
+
+export async function deleteSubtask(id: string) {
+  const userId = await getUserId()
+  await assertCanEditTask(id, userId)
+  const [full] = await db.select({ parentId: task.parentId }).from(task).where(eq(task.id, id)).limit(1)
+  if (!full?.parentId) throw new Error('Not a subtask')
+
+  await db.delete(taskComment).where(eq(taskComment.taskId, id))
+  await db.delete(activity).where(eq(activity.taskId, id))
+  await db.delete(task).where(eq(task.id, id))
+  revalidatePath('/')
 }
 
 // ---- epic / sprint cross-projection helpers (used by the UI to show sprint & epic on tasks) ----

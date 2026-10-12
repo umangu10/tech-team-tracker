@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, boolean } from 'drizzle-orm/pg-core'
+import { pgTable, text, integer, timestamp, boolean, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 // ---------------------------------------------------------------------------
 // better-auth core tables (Postgres)
@@ -129,11 +129,15 @@ export const task = pgTable('task', {
     .notNull()
     .references(() => project.id, { onDelete: 'cascade' }),
   epicId: text('epicId').references(() => epic.id, { onDelete: 'set null' }),
+  // Self-reference: a subtask points at its parent work item.
+  parentId: text('parentId').references((): AnyPgColumn => task.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
   type: text('type').notNull().default('Task'),
   priority: text('priority').notNull().default('Medium'),
   status: text('status').notNull().default('To do'),
+  // JSON-encoded array of label strings, e.g. '["security","aws"]'.
+  labels: text('labels').notNull().default(''),
   dueDate: timestamp('dueDate'),
   area: text('area').notNull().default('Engineering'),
   points: integer('points').notNull().default(3),
